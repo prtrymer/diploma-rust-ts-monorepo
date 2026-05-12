@@ -1,0 +1,2 @@
+-- Portfolio tables — placeholder, schema TBD.
+-- Will contain portfolio snapshots, positions, and trade history.

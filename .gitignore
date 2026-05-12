@@ -1,0 +1,42 @@
+# --- Rust ---
+/target
+# Cargo.lock should be tracked for binary projects
+# Only ignore lock file if it's a library, but this looks like an app. 
+# Usually for apps we keep it, but some prefer to ignore it. 
+# I'll leave it tracked for now unless the user asks, but I'll add common backup files.
+**/*.rs.bk
+**/*.pdb
+
+# --- Environment & Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Local Data & Artifacts ---
+files/
+logs/
+*.log
+scylla_data/
+postgres_data/
+
+# --- IDEs & Editors ---
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+*.code-workspace
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# --- OS Specific ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

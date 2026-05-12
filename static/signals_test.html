@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Signals — WebSocket Test</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', 'SF Pro', system-ui, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        h1 { color: #58a6ff; margin-bottom: .5rem; font-size: 1.6rem; }
+        .subtitle { color: #8b949e; margin-bottom: 1.5rem; font-size: .9rem; }
+        .controls {
+            display: flex; gap: .75rem; flex-wrap: wrap;
+            margin-bottom: 1.5rem;
+        }
+        button {
+            padding: .55rem 1.2rem;
+            border: none; border-radius: 6px;
+            font-weight: 600; font-size: .85rem;
+            cursor: pointer; transition: .15s;
+        }
+        button:active { transform: scale(.97); }
+        #btnConnect    { background: #238636; color: #fff; }
+        #btnDisconnect { background: #da3633; color: #fff; }
+        #btnTest       { background: #1f6feb; color: #fff; }
+        #btnClear      { background: #30363d; color: #c9d1d9; }
+        .status {
+            display: inline-block;
+            padding: .3rem .8rem;
+            border-radius: 20px;
+            font-size: .8rem; font-weight: 600;
+            margin-bottom: 1rem;
+        }
+        .status.connected    { background: #23863622; color: #3fb950; border: 1px solid #23863655; }
+        .status.disconnected { background: #da363322; color: #f85149; border: 1px solid #da363355; }
+        .status.connecting   { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb55; }
+        #log {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1rem;
+            max-height: 70vh;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: .82rem;
+            line-height: 1.6;
+        }
+        .entry { border-bottom: 1px solid #21262d; padding: .4rem 0; }
+        .entry:last-child { border-bottom: none; }
+        .entry .ts   { color: #8b949e; }
+        .entry .dir  { font-weight: 700; padding: .1rem .4rem; border-radius: 4px; font-size: .75rem; }
+        .dir.Long  { background: #23863633; color: #3fb950; }
+        .dir.Short { background: #da363333; color: #f85149; }
+        .dir.Exit  { background: #1f6feb33; color: #58a6ff; }
+        .entry .sym  { color: #d2a8ff; font-weight: 600; }
+        .entry .str  { color: #ffa657; }
+        .entry .meta { color: #8b949e; font-size: .75rem; }
+    </style>
+</head>
+<body>
+    <h1>⚡ Trading Signals — Live Stream</h1>
+    <p class="subtitle">Tests the WebSocket connection to <code>/api/signals/stream</code></p>
+
+    <div class="controls">
+        <button id="btnConnect" onclick="connect()">🔌 Connect WS</button>
+        <button id="btnDisconnect" onclick="disconnect()">✖ Disconnect</button>
+        <button id="btnTest" onclick="sendTest()">🧪 Send Mock Signal</button>
+        <button id="btnClear" onclick="clearLog()">🗑 Clear</button>
+    </div>
+
+    <div id="status" class="status disconnected">● Disconnected</div>
+    <div id="log"></div>
+
+    <script>
+        let ws = null;
+        const log = document.getElementById('log');
+        const statusEl = document.getElementById('status');
+
+        function setStatus(state, text) {
+            statusEl.className = 'status ' + state;
+            statusEl.textContent = text;
+        }
+
+        function addEntry(html) {
+            const div = document.createElement('div');
+            div.className = 'entry';
+            div.innerHTML = html;
+            log.prepend(div);   // newest on top
+        }
+
+        function connect() {
+            if (ws && ws.readyState <= 1) { addEntry('<span class="ts">already connected</span>'); return; }
+            setStatus('connecting', '◌ Connecting…');
+            const url = 'ws://localhost:3000/api/signals/stream';
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                setStatus('connected', '● Connected');
+                addEntry('<span class="ts">' + ts() + '</span> WebSocket opened');
+            };
+            ws.onclose = (e) => {
+                setStatus('disconnected', '● Disconnected');
+                addEntry('<span class="ts">' + ts() + '</span> WebSocket closed (code ' + e.code + ')');
+            };
+            ws.onerror = (e) => {
+                setStatus('disconnected', '● Error');
+                addEntry('<span class="ts">' + ts() + '</span> ⚠️ WebSocket error');
+            };
+            ws.onmessage = (e) => {
+                try {
+                    const sig = JSON.parse(e.data);
+                    const dir = sig.direction || '?';
+                    addEntry(
+                        '<span class="ts">' + ts() + '</span> ' +
+                        '<span class="dir ' + dir + '">' + dir.toUpperCase() + '</span> ' +
+                        '<span class="sym">' + (sig.symbol || '—') + '</span> ' +
+                        'strength=<span class="str">' + (sig.strength || '—') + '</span> ' +
+                        'strategy=' + (sig.strategy_name || '') + ' ' +
+                        '<span class="meta">' + (sig.metadata || '') + '</span>'
+                    );
+                } catch {
+                    addEntry('<span class="ts">' + ts() + '</span> raw: ' + e.data);
+                }
+            };
+        }
+
+        function disconnect() {
+            if (ws) ws.close();
+        }
+
+        function clearLog() { log.innerHTML = ''; }
+
+        async function sendTest() {
+            try {
+                const r = await fetch('/api/signals/test', { method: 'POST' });
+                const j = await r.json();
+                addEntry('<span class="ts">' + ts() + '</span> 🧪 ' + j.message);
+            } catch (e) {
+                addEntry('<span class="ts">' + ts() + '</span> ⚠️ test request failed: ' + e);
+            }
+        }
+
+        function ts() {
+            return new Date().toLocaleTimeString('en-GB', { hour12: false });
+        }
+
+        // Auto-connect on page load
+        connect();
+    </script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS active_symbols (
+    symbol VARCHAR(20) PRIMARY KEY,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
