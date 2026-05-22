@@ -29,11 +29,16 @@ pub async fn init_trading_engine(
     usize, // lookback_size
 ) {
     let lookback_size = if is_simulated { 10 } else { 30 };
+    
+    let min_confidence_str = std::env::var("MIN_CONFIDENCE").unwrap_or_else(|_| "0.05".to_string());
+    let min_confidence = min_confidence_str.parse::<Decimal>().unwrap_or(dec!(0.05));
+    println!("Initializing MomentumStrategy with min_confidence: {}", min_confidence);
+
     let strategy = Arc::new(RwLock::new(MomentumStrategy::new(
         feature_registry,
         model,
         lookback_size,
-        dec!(0.001),
+        min_confidence,
         if is_simulated { 2 } else { 10 },
     ))) as Arc<RwLock<dyn StrategyPort>>;
 
@@ -49,48 +54,7 @@ pub async fn init_trading_engine(
                         eprintln!("  Failed to warm up {}: {}", symbol, e);
                     }
                 } else {
-                    println!("  No historical candles found for {} in ScyllaDB. Fetching from API/Data Source...", symbol);
-                    let now = chrono::Utc::now();
-                    // Fetch lookback_size * 3 minutes to ensure we have enough candles to satisfy lookback
-                    let start = now - chrono::Duration::minutes(lookback_size as i64 * 3);
-                    match data_source.fetch_historical_quotes(symbol, start, now, "1m").await {
-                        Ok(quotes) if !quotes.is_empty() => {
-                            println!("  Fetched {} historical quotes from API for {}", quotes.len(), symbol);
-                            let mut converted_candles = Vec::new();
-                            for q in quotes {
-                                let candle = Candle {
-                                    symbol: symbol.clone(),
-                                    timestamp: q.timestamp,
-                                    timeframe: Timeframe::OneMin,
-                                    open: Decimal::try_from(q.open).unwrap_or_default(),
-                                    high: Decimal::try_from(q.high).unwrap_or_default(),
-                                    low: Decimal::try_from(q.low).unwrap_or_default(),
-                                    close: Decimal::try_from(q.close).unwrap_or_default(),
-                                    volume: q.volume as i64,
-                                    trades_count: None,
-                                    vwap: None,
-                                };
-                                // Persist to ScyllaDB
-                                if let Err(err) = repository.insert_candle_1min(&candle).await {
-                                    eprintln!("  Failed to persist candle to stock_1min: {}", err);
-                                }
-                                if let Err(err) = repository.insert_candle(&candle).await {
-                                    eprintln!("  Failed to persist candle to unified candles table: {}", err);
-                                }
-                                converted_candles.push(candle);
-                            }
-                            let mut strat = strategy.write().await;
-                            if let Err(e) = strat.warmup(converted_candles).await {
-                                eprintln!("  Failed to warm up {}: {}", symbol, e);
-                            }
-                        }
-                        Ok(_) => {
-                            eprintln!("  No real historical quotes returned from API for {}", symbol);
-                        }
-                        Err(e) => {
-                            eprintln!("  Failed to fetch historical quotes from API for {}: {}", symbol, e);
-                        }
-                    }
+                    println!("  No historical candles found for {} in ScyllaDB. Skipping direct API fetch (will be processed via Kafka startup warmup).", symbol);
                 }
             }
             Err(e) => eprintln!("  Error fetching candles for {}: {}", symbol, e),

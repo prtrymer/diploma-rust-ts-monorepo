@@ -83,16 +83,20 @@ pub async fn add_symbol(
         println!("🚀 Starting fast warmup for newly added symbol: {}", symbol_clone);
         let data_source = YahooFinanceAdapter::new();
         let end = Utc::now();
-        // 120 hours = 5 days just to be sure we get enough trading minutes to cover 30 candles
-        // Since weekends and off-hours exist, we need a larger span than just 30 minutes.
-        let start = end - chrono::Duration::hours(120); 
-        
+        // 120 hours = 5 days to ensure enough trading minutes across weekends
+        let start = end - chrono::Duration::hours(120);
+
         match data_source.fetch_historical_quotes(&symbol_clone, start, end, "1m").await {
             Ok(quotes) => {
-                let recent: Vec<_> = quotes.into_iter().rev().take(60).collect::<Vec<_>>().into_iter().rev().collect();
+                let recent: Vec<_> = quotes.into_iter().rev().take(1000).collect::<Vec<_>>().into_iter().rev().collect();
                 println!("Fetched {} historical 1m candles for {} warmup", recent.len(), symbol_clone);
+
+                let mut last_price: Option<Decimal> = None;
+
+                // Send historical ticks with their real timestamps for ML model training
                 for quote in recent {
                     if let Some(price) = Decimal::from_f64_retain(quote.close) {
+                        last_price = Some(price);
                         let tick = StockTick {
                             symbol: quote.symbol.clone(),
                             timestamp: quote.timestamp,
@@ -111,7 +115,29 @@ pub async fn add_symbol(
                         }
                     }
                 }
-                println!("✅ Successfully dispatched warmup ticks for {}", symbol_clone);
+
+                // Send one final "now" tick to anchor the generated signal to the current time.
+                // Without this, the signal timestamp would be the last historical candle's time (days ago).
+                if let Some(price) = last_price {
+                    let now_tick = StockTick {
+                        symbol: symbol_clone.clone(),
+                        timestamp: Utc::now(),
+                        price,
+                        volume: 0,
+                        bid: None,
+                        ask: None,
+                        source: "warmup_anchor".to_string(),
+                    };
+                    if let Ok(json) = serde_json::to_string(&now_tick) {
+                        let _ = producer.send_message(StreamMessage {
+                            topic: "market-data-raw".to_string(),
+                            key: Some(symbol_clone.clone()),
+                            value: json,
+                        }).await;
+                    }
+                }
+
+                println!("✅ Warmup complete for {} — signal timestamps anchored to now", symbol_clone);
             }
             Err(e) => eprintln!("❌ Failed to fetch warmup data for {}: {}", symbol_clone, e),
         }
@@ -297,39 +323,46 @@ pub async fn get_chart_data(
     let end = Utc::now();
     let cache_key = format!("{}_{}", symbol, timeframe);
     
-    // 1. Fetch from Yahoo Finance if not cached within last 5 minutes
-    let mut needs_fetch = true;
-    if let Some((ts, cached)) = chart_cache().read().await.get(&cache_key) {
-        if (end - *ts).num_minutes() < 5 {
-            chart_candles = cached.clone();
-            needs_fetch = false;
+    let is_simulated = std::env::var("USE_SIMULATION").unwrap_or_default() == "true";
+
+    // 1. Fetch from Yahoo Finance if NOT in simulation mode and not cached within last 5 minutes.
+    //    In simulation mode we skip this entirely — real historical prices are on a completely
+    //    different scale than the simulated GBM prices, which would produce a massive cliff drop
+    //    at the stitch point and make the chart look broken.
+    if !is_simulated {
+        let mut needs_fetch = true;
+        if let Some((ts, cached)) = chart_cache().read().await.get(&cache_key) {
+            if (end - *ts).num_minutes() < 5 {
+                chart_candles = cached.clone();
+                needs_fetch = false;
+            }
         }
-    }
-    
-    if needs_fetch {
-        let data_source = YahooFinanceAdapter::new();
-        let start = end - chrono::Duration::hours(120); // 5 days back
-        if let Ok(quotes) = data_source.fetch_historical_quotes(&symbol, start, end, &timeframe).await {
-            // Check if data is dense enough to be intraday (ignore 1d fallback if timeframe=1m)
-            let is_intraday = timeframe != "1m" || quotes.len() < 3 || {
-                let diff = quotes[1].timestamp.timestamp() - quotes[0].timestamp.timestamp();
-                diff <= 900 // max 15 minutes between candles
-            };
-            
-            if is_intraday {
-                let mut fetched = Vec::new();
-                for q in quotes {
-                    fetched.push(crate::http::models::ChartCandle {
-                        time: q.timestamp.timestamp(),
-                        open: q.open,
-                        high: q.high,
-                        low: q.low,
-                        close: q.close,
-                        volume: q.volume,
-                    });
+
+        if needs_fetch {
+            let data_source = YahooFinanceAdapter::new();
+            let start = end - chrono::Duration::hours(120); // 5 days back
+            if let Ok(quotes) = data_source.fetch_historical_quotes(&symbol, start, end, &timeframe).await {
+                // Check if data is dense enough to be intraday (ignore 1d fallback if timeframe=1m)
+                let is_intraday = timeframe != "1m" || quotes.len() < 3 || {
+                    let diff = quotes[1].timestamp.timestamp() - quotes[0].timestamp.timestamp();
+                    diff <= 900 // max 15 minutes between candles
+                };
+
+                if is_intraday {
+                    let mut fetched = Vec::new();
+                    for q in quotes {
+                        fetched.push(crate::http::models::ChartCandle {
+                            time: q.timestamp.timestamp(),
+                            open: q.open,
+                            high: q.high,
+                            low: q.low,
+                            close: q.close,
+                            volume: q.volume,
+                        });
+                    }
+                    chart_candles = fetched.clone();
+                    chart_cache().write().await.insert(cache_key, (end, fetched));
                 }
-                chart_candles = fetched.clone();
-                chart_cache().write().await.insert(cache_key, (end, fetched));
             }
         }
     }

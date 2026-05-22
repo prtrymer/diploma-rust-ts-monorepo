@@ -8,6 +8,10 @@ pub mod http;
 
 use std::sync::Arc;
 use anyhow::Result;
+use crate::data_ingestion::domain::models::StreamMessage;
+use crate::database::domain::models::StockTick;
+use rust_decimal::Decimal;
+use chrono::Utc;
 
 pub async fn run() -> Result<()> {
     dotenv::dotenv().ok();
@@ -96,6 +100,94 @@ pub async fn run() -> Result<()> {
     tokio::spawn(async move {
         if let Err(e) = svc.start_consuming().await {
             eprintln!("HTTP signals handler error: {}", e);
+        }
+    });
+
+    // Startup Warmup: Fetch all portfolio symbols from PostgreSQL (including any added after boot),
+    // train models on historical data, then send one "now" tick to anchor signal timestamps.
+    let producer_warmup = producer.clone();
+    let data_source_warmup = data_source.clone();
+    let user_repo_warmup = user_repo.clone();
+    tokio::spawn(async move {
+        println!("⏳ Waiting 3 seconds for Kafka consumers to settle before starting startup warmup...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+        // Re-fetch fresh from postgres to catch ALL portfolio symbols (not just the boot snapshot)
+        let all_symbols = match user_repo_warmup.get_active_symbols().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("❌ Failed to load portfolio symbols for warmup: {}", e);
+                return;
+            }
+        };
+        println!("🚀 Starting startup warmup for all portfolio symbols: {:?}", all_symbols);
+
+        for symbol in all_symbols {
+            let symbol_clone = symbol.clone();
+            let producer_inner = producer_warmup.clone();
+            let data_source_inner = data_source_warmup.clone();
+
+            tokio::spawn(async move {
+                let end = Utc::now();
+                // 120 hours = 5 days to ensure enough trading minutes across weekends
+                let start = end - chrono::Duration::hours(120);
+
+                match data_source_inner.fetch_historical_quotes(&symbol_clone, start, end, "1m").await {
+                    Ok(quotes) => {
+                        let recent: Vec<_> = quotes.into_iter().rev().take(1000).collect::<Vec<_>>().into_iter().rev().collect();
+                        println!("Fetched {} historical 1m candles for {} startup warmup", recent.len(), symbol_clone);
+
+                        let mut last_price: Option<Decimal> = None;
+
+                        // Send historical ticks for ML model training (with real historical timestamps)
+                        for quote in recent {
+                            if let Some(price) = Decimal::from_f64_retain(quote.close) {
+                                last_price = Some(price);
+                                let tick = StockTick {
+                                    symbol: quote.symbol.clone(),
+                                    timestamp: quote.timestamp,
+                                    price,
+                                    volume: quote.volume as i64,
+                                    bid: None,
+                                    ask: None,
+                                    source: "warmup".to_string(),
+                                };
+                                if let Ok(json) = serde_json::to_string(&tick) {
+                                    let _ = producer_inner.send_message(StreamMessage {
+                                        topic: "market-data-raw".to_string(),
+                                        key: Some(quote.symbol),
+                                        value: json,
+                                    }).await;
+                                }
+                            }
+                        }
+
+                        // Send one final "now" tick to anchor the generated signal to the current time.
+                        // Without this, the signal timestamp would be the last historical candle's time (days ago).
+                        if let Some(price) = last_price {
+                            let now_tick = StockTick {
+                                symbol: symbol_clone.clone(),
+                                timestamp: Utc::now(),
+                                price,
+                                volume: 0,
+                                bid: None,
+                                ask: None,
+                                source: "warmup_anchor".to_string(),
+                            };
+                            if let Ok(json) = serde_json::to_string(&now_tick) {
+                                let _ = producer_inner.send_message(StreamMessage {
+                                    topic: "market-data-raw".to_string(),
+                                    key: Some(symbol_clone.clone()),
+                                    value: json,
+                                }).await;
+                            }
+                        }
+
+                        println!("✅ Warmup complete for {} — signal timestamps anchored to now", symbol_clone);
+                    }
+                    Err(e) => eprintln!("❌ Failed to fetch startup warmup data for {}: {}", symbol_clone, e),
+                }
+            });
         }
     });
 

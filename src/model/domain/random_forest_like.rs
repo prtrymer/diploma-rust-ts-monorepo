@@ -122,7 +122,9 @@ impl PredictionModel for RandomForestLikeModel {
 
         let mut updates = self.updates.write().await;
         *updates += 1;
-        if *updates % self.train_every != 0 {
+        
+        let needs_initial_train = self.model.read().await.is_none();
+        if *updates % self.train_every != 0 && !needs_initial_train {
             return Ok(());
         }
         drop(updates);

@@ -19,7 +19,7 @@ pub async fn init_ingestion(
 
     let data_source = if is_simulated {
         println!("Using Simulated Data Source (Random Walk)...");
-        Arc::new(crate::data_ingestion::adapters::simulated::SimulatedDataSource::new(0.005)) as Arc<dyn DataSourcePort>
+        Arc::new(crate::data_ingestion::adapters::simulated::SimulatedDataSource::new(0.25)) as Arc<dyn DataSourcePort>
     } else {
         Arc::new(YahooFinanceAdapter::new()) as Arc<dyn DataSourcePort>
     };

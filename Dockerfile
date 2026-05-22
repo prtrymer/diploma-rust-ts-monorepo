@@ -1,9 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUILDPLATFORM
-ARG TARGETPLATFORM
-
-FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS dashboard-builder
+FROM node:22-bookworm-slim AS dashboard-builder
 WORKDIR /workspace/dashboard
 
 COPY dashboard/package*.json ./
@@ -12,7 +9,7 @@ RUN npm ci
 COPY dashboard/ ./
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM rust:1-bookworm AS backend-builder
+FROM rust:1-bookworm AS backend-builder
 WORKDIR /workspace
 
 RUN apt-get update \
@@ -33,7 +30,7 @@ COPY src ./src
 COPY migrations ./migrations
 COPY static ./static
 
-RUN cargo build --release --locked --bin db-con
+RUN cargo build --release --bin db-con
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
@@ -49,7 +46,7 @@ RUN apt-get update \
 
 COPY --from=backend-builder /workspace/target/release/db-con ./db-con
 COPY --from=backend-builder /workspace/static ./static
-COPY --from=dashboard-builder /workspace/dashboard/dist ./static/dist
+COPY --from=dashboard-builder /workspace/static/dist ./static/dist
 
 EXPOSE 3000
 

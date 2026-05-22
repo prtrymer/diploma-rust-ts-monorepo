@@ -20,12 +20,13 @@ services:
       DATABASE_URL: postgres://trading:trading@postgres:5432/trading
       SCYLLA_NODES: scylla:9042
       SCYLLA_KEYSPACE: market_data
-      KAFKA_BROKERS: kafka:9092
+      KAFKA_BROKERS: kafka:9093
       KAFKA_TOPIC: market-data-raw
       JWT_SECRET: docker-dev-secret
-      USE_SIMULATION: "true"
+      USE_SIMULATION: "false"
       BACKTEST_FETCH_MISSING: "false"
       BACKTEST_MIN_CONFIDENCE: "0.01"
+      MIN_CONFIDENCE: "0.02"
       HIST_SYNC_ON_START: "false"
 
   scylla:

@@ -55,11 +55,9 @@ pub fn init_models(is_simulated: bool) -> Arc<dyn PredictionModel> {
         (slow_rf, dec!(0.20)),
     ];
     
-    if is_simulated {
-        model_weights.push((heuristic_model, dec!(0.25)));
-    } else {
-        model_weights.push((heuristic_model, dec!(0.05)));
-    }
+    // Heuristic model (RSI/MACD/momentum) produces meaningful signals immediately.
+    // Keep it at 0.25 in both modes so the ensemble stays actionable while RF models train.
+    model_weights.push((heuristic_model, dec!(0.25)));
 
     Arc::new(WeightedEnsembleModel::new(
         model_weights,
