@@ -1,7 +1,37 @@
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: db-con:latest
+    container_name: app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      scylla:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://trading:trading@postgres:5432/trading
+      SCYLLA_NODES: scylla:9042
+      SCYLLA_KEYSPACE: market_data
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC: market-data-raw
+      JWT_SECRET: docker-dev-secret
+      USE_SIMULATION: "true"
+      BACKTEST_FETCH_MISSING: "false"
+      BACKTEST_MIN_CONFIDENCE: "0.01"
+      HIST_SYNC_ON_START: "false"
+
   scylla:
     image: scylladb/scylla:5.4
     container_name: scylla_db
+    platform: linux/amd64
     ports:
       - "9042:9042"
       - "9160:9160"
@@ -22,7 +52,7 @@ services:
     image: postgres:16-alpine
     container_name: postgres_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_DB: trading
       POSTGRES_USER: trading

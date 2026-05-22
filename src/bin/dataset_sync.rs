@@ -8,6 +8,7 @@ use db_con::data_ingestion::domain::dataset::HistoricalDatasetService;
 use db_con::data_ingestion::ports::DataSourcePort;
 use db_con::database::adapters::scylladb::ScyllaRepository;
 use db_con::database::ports::repository::Repository;
+use db_con::shared::config::scylla_nodes;
 
 #[derive(Debug, Clone)]
 struct Args {
@@ -101,9 +102,8 @@ async fn main() -> Result<()> {
         args.symbol, args.start, args.end, args.interval
     );
 
-    let repository =
-        Arc::new(ScyllaRepository::new(vec!["127.0.0.1:9042".to_string()], "market_data").await?)
-            as Arc<dyn Repository>;
+    let repository = Arc::new(ScyllaRepository::new(scylla_nodes(), "market_data").await?)
+        as Arc<dyn Repository>;
     let data_source = Arc::new(YahooFinanceAdapter::new()) as Arc<dyn DataSourcePort>;
     let svc = HistoricalDatasetService::new(data_source, repository);
 

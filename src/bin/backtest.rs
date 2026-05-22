@@ -40,6 +40,7 @@ use db_con::trading::domain::events::{FillEvent, OrderEvent, OrderSide, OrderTyp
 use db_con::trading::ports::{
     BrokerSimulatorPort, ExecutionHandlerPort, PortfolioPort, StrategyPort,
 };
+use db_con::shared::config::{kafka_brokers, scylla_nodes};
 
 #[derive(Clone, Debug)]
 struct BacktestArgs {
@@ -554,8 +555,10 @@ async fn build_pipeline(
     Arc<RwLock<MomentumStrategy>>,
     Arc<RwLock<Vec<db_con::trading::domain::events::FillEvent>>>,
 )> {
+    let brokers = kafka_brokers();
+
     ensure_topics(
-        "localhost:9092",
+        &brokers,
         &[
             market_topic.clone(),
             signal_topic.clone(),
@@ -591,22 +594,22 @@ async fn build_pipeline(
     }) as Arc<dyn ExecutionHandlerPort>;
 
     let consumer_strategy = Arc::new(KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("bt-strategy-{}", Utc::now().timestamp_millis()),
         &[market_topic.clone()],
     )?);
     let consumer_execution = Arc::new(KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("bt-execution-{}", Utc::now().timestamp_millis()),
         &[signal_topic.clone()],
     )?);
     let consumer_broker = Arc::new(KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("bt-broker-{}", Utc::now().timestamp_millis()),
         &[order_topic.clone()],
     )?);
     let consumer_portfolio = Arc::new(KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("bt-portfolio-{}", Utc::now().timestamp_millis()),
         &[fill_topic.clone()],
     )?);
@@ -942,12 +945,10 @@ async fn main() -> Result<()> {
     );
     println!();
 
-    let repository =
-        Arc::new(ScyllaRepository::new(vec!["127.0.0.1:9042".to_string()], "market_data").await?)
-            as Arc<dyn Repository>;
+    let repository = Arc::new(ScyllaRepository::new(scylla_nodes(), "market_data").await?)
+        as Arc<dyn Repository>;
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let producer =
-        Arc::new(KafkaProducerAdapter::new("localhost:9092")?) as Arc<dyn MessageProducerPort>;
+    let producer = Arc::new(KafkaProducerAdapter::new(&kafka_brokers())?) as Arc<dyn MessageProducerPort>;
     let loader = Arc::new(ScyllaHistoricalLoader::new(
         repository,
         producer.clone(),

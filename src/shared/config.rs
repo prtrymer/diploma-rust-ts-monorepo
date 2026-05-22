@@ -31,3 +31,26 @@ impl Config {
         })
     }
 }
+
+fn env_or_default(key: &str, default: &str) -> String {
+    env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+pub fn database_url() -> String {
+    env_or_default("DATABASE_URL", "postgres://trading:trading@localhost:5432/trading")
+}
+
+pub fn scylla_nodes() -> Vec<String> {
+    let raw = env::var("SCYLLA_NODES")
+        .or_else(|_| env::var("SCYLLA_HOST"))
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    raw.split(',')
+        .map(|node| node.trim().to_string())
+        .filter(|node| !node.is_empty())
+        .collect()
+}
+
+pub fn kafka_brokers() -> String {
+    env_or_default("KAFKA_BROKERS", "localhost:9092")
+}

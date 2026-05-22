@@ -8,3 +8,4 @@ pub mod message_broker;
 pub mod model;
 pub mod shared;
 pub mod trading;
+pub mod bootstrap;

@@ -31,6 +31,7 @@ use crate::trading::adapters::strategy_handler::StrategyHandler;
 use crate::trading::ports::{
     BrokerSimulatorPort, ExecutionHandlerPort, PortfolioPort, StrategyPort,
 };
+use crate::shared::config::kafka_brokers;
 
 use crate::http::models::BacktestRequest;
 use crate::http::middlewares::auth::Claims;
@@ -83,6 +84,7 @@ pub async fn run_backtest(
         .ok()
         .and_then(|v| v.parse::<Decimal>().ok())
         .unwrap_or(dec!(0.01));
+    let brokers = kafka_brokers();
 
     // --- Feature Registry ---
     let mut feature_registry = FeatureRegistry::new();
@@ -209,7 +211,7 @@ pub async fn run_backtest(
     let fill_topic = format!("backtest-trading-fills-{}", ts);
 
     if let Err(e) = ensure_topics(
-        "localhost:9092",
+        &brokers,
         &[
             market_topic.clone(),
             signal_topic.clone(),
@@ -226,7 +228,7 @@ pub async fn run_backtest(
     }
 
     let consumer_strategy = match KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("http-bt-strategy-{}", ts),
         &[market_topic.clone()],
     ) {
@@ -240,7 +242,7 @@ pub async fn run_backtest(
     };
 
     let consumer_execution = match KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("http-bt-execution-{}", ts),
         &[signal_topic.clone()],
     ) {
@@ -254,7 +256,7 @@ pub async fn run_backtest(
     };
 
     let consumer_broker = match KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("http-bt-broker-{}", ts),
         &[order_topic.clone()],
     ) {
@@ -268,7 +270,7 @@ pub async fn run_backtest(
     };
 
     let consumer_portfolio = match KafkaConsumerAdapter::new(
-        "localhost:9092",
+        &brokers,
         &format!("http-bt-portfolio-{}", ts),
         &[fill_topic.clone()],
     ) {
