@@ -73,8 +73,8 @@ fn parse_date(s: &str) -> Result<DateTime<Utc>> {
 fn parse_args() -> Result<BacktestArgs> {
     let args: Vec<String> = env::args().collect();
     let mut symbol = "AAPL".to_string();
-    let mut start_str = "2026-01-01".to_string();
-    let mut end_str = "2026-12-31".to_string();
+    let mut start_str = "2022-01-01".to_string();
+    let mut end_str = "2024-12-31".to_string();
     let mut capital = dec!(100000);
     let mut fetch_missing = false;
     let mut min_confidence = dec!(0.01);
@@ -1071,7 +1071,13 @@ async fn main() -> Result<()> {
             report.total_return, report.total_return_pct
         );
         println!("Sharpe Ratio (ann.): {}", report.sharpe_ratio);
-        println!("Sortino Ratio (ann.): {}", report.sortino_ratio);
+        match report.sortino_ratio {
+            Some(s) => println!("Sortino Ratio (ann.): {}", s),
+            None if report.total_trades < 10 =>
+                println!("Sortino Ratio (ann.): N/A (менше 10 угод)"),
+            None =>
+                println!("Sortino Ratio (ann.): N/A (σ_down = 0, усі equity-кроки невід'ємні)"),
+        }
         println!(
             "Max Drawdown: {} ({}%)",
             report.max_drawdown, report.max_drawdown_pct
@@ -1093,7 +1099,13 @@ async fn main() -> Result<()> {
         }
         if report.total_trades < 5 {
             println!(
-                "Report warning: only {} trade(s), metrics may be statistically unstable.",
+                "Report warning: лише {} угод(и) — метрики статистично нестабільні.",
+                report.total_trades
+            );
+        } else if report.total_trades < 30 {
+            println!(
+                "Report warning: {} угод — для надійної інтерпретації win rate і Sharpe \
+                 бажано 30+. Розгляньте довший інтервал або ширший min_confidence.",
                 report.total_trades
             );
         }
@@ -1173,15 +1185,28 @@ async fn main() -> Result<()> {
             reports.push(rep);
         }
         if !reports.is_empty() {
-            let avg_ret: Decimal = reports.iter().map(|r| r.total_return_pct).sum::<Decimal>()
-                / Decimal::from(reports.len() as u64);
-            let avg_sharpe: Decimal = reports.iter().map(|r| r.sharpe_ratio).sum::<Decimal>()
-                / Decimal::from(reports.len() as u64);
+            let n = Decimal::from(reports.len() as u64);
+            let avg_ret: Decimal =
+                reports.iter().map(|r| r.total_return_pct).sum::<Decimal>() / n;
+            let avg_sharpe: Decimal =
+                reports.iter().map(|r| r.sharpe_ratio).sum::<Decimal>() / n;
             let total_trades: usize = reports.iter().map(|r| r.total_trades).sum();
+
+            let sortino_vals: Vec<Decimal> =
+                reports.iter().filter_map(|r| r.sortino_ratio).collect();
+            let avg_sortino_str = if sortino_vals.is_empty() {
+                "N/A".to_string()
+            } else {
+                let s = sortino_vals.iter().copied().sum::<Decimal>()
+                    / Decimal::from(sortino_vals.len() as u64);
+                s.to_string()
+            };
+
             println!("\n=== Walk-Forward Summary ===");
             println!("Folds: {}", reports.len());
             println!("Average Return: {}%", avg_ret);
             println!("Average Sharpe: {}", avg_sharpe);
+            println!("Average Sortino: {}", avg_sortino_str);
             println!("Total Trades: {}", total_trades);
         }
     }

@@ -10,7 +10,8 @@ pub struct BacktestReport {
     pub total_return: Decimal,
     pub total_return_pct: Decimal,
     pub sharpe_ratio: Decimal,
-    pub sortino_ratio: Decimal,
+    /// None означає: або угод менше 10, або σ_down = 0 (усі trades прибуткові — Sortino не визначений).
+    pub sortino_ratio: Option<Decimal>,
     pub max_drawdown: Decimal,
     pub max_drawdown_pct: Decimal,
     pub win_rate: Decimal,
@@ -137,7 +138,14 @@ impl BacktestReport {
         };
 
         let sharpe_ratio = calc_sharpe_annualized(&equity_curve);
-        let sortino_ratio = calc_sortino_annualized(&equity_curve);
+        // Sortino визначений лише при достатній кількості угод і наявності хоча б одного
+        // негативного equity-step (σ_down > 0). При total_trades < 10 вибірка занадто мала.
+        const MIN_TRADES_FOR_SORTINO: usize = 10;
+        let sortino_ratio = if total_trades >= MIN_TRADES_FOR_SORTINO {
+            calc_sortino_annualized(&equity_curve)
+        } else {
+            None
+        };
 
         Self {
             total_return,
@@ -199,13 +207,14 @@ fn calc_sharpe_annualized(equity_curve: &[Decimal]) -> Decimal {
 }
 
 // Annualized Sortino ratio (risk-free rate = 0), downside deviation uses all periods.
-fn calc_sortino_annualized(equity_curve: &[Decimal]) -> Decimal {
+// Повертає None, якщо σ_down = 0 (жодного негативного equity-step — Sortino не визначений).
+fn calc_sortino_annualized(equity_curve: &[Decimal]) -> Option<Decimal> {
     if equity_curve.len() < 3 {
-        return Decimal::ZERO;
+        return None;
     }
     let returns = build_returns(equity_curve);
     if returns.len() < 2 {
-        return Decimal::ZERO;
+        return None;
     }
     let mean = returns.iter().sum::<f64>() / returns.len() as f64;
     // Downside variance: sum of squared negative returns divided by total N.
@@ -215,9 +224,9 @@ fn calc_sortino_annualized(equity_curve: &[Decimal]) -> Decimal {
         .sum::<f64>()
         / returns.len() as f64;
     let downside_std = downside_var.sqrt();
-    if downside_std <= 0.0 {
-        return if mean > 0.0 { Decimal::from(99) } else { Decimal::ZERO };
+    if downside_std <= 1e-12 {
+        // σ_down ≈ 0: всі equity-кроки невід'ємні — Sortino математично не визначений (→ +∞).
+        return None;
     }
     Decimal::from_f64_retain(mean / downside_std * TRADING_DAYS_PER_YEAR.sqrt())
-        .unwrap_or(Decimal::ZERO)
 }
