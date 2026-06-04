@@ -30,7 +30,7 @@ COPY src ./src
 COPY migrations ./migrations
 COPY static ./static
 
-RUN cargo build --release --bin db-con
+RUN cargo build --release --locked --bin db-con
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
@@ -46,7 +46,7 @@ RUN apt-get update \
 
 COPY --from=backend-builder /workspace/target/release/db-con ./db-con
 COPY --from=backend-builder /workspace/static ./static
-COPY --from=dashboard-builder /workspace/static/dist ./static/dist
+COPY --from=dashboard-builder /workspace/dashboard/dist ./static/dist
 
 EXPOSE 3000
 

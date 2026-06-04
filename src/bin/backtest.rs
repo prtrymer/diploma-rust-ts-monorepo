@@ -1070,7 +1070,8 @@ async fn main() -> Result<()> {
             "Total Return: {} ({}%)",
             report.total_return, report.total_return_pct
         );
-        println!("Sharpe Ratio: {}", report.sharpe_ratio);
+        println!("Sharpe Ratio (ann.): {}", report.sharpe_ratio);
+        println!("Sortino Ratio (ann.): {}", report.sortino_ratio);
         println!(
             "Max Drawdown: {} ({}%)",
             report.max_drawdown, report.max_drawdown_pct

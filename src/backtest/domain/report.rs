@@ -10,6 +10,7 @@ pub struct BacktestReport {
     pub total_return: Decimal,
     pub total_return_pct: Decimal,
     pub sharpe_ratio: Decimal,
+    pub sortino_ratio: Decimal,
     pub max_drawdown: Decimal,
     pub max_drawdown_pct: Decimal,
     pub win_rate: Decimal,
@@ -135,12 +136,14 @@ impl BacktestReport {
             Decimal::ZERO
         };
 
-        let sharpe_ratio = calc_sharpe_proxy(&equity_curve);
+        let sharpe_ratio = calc_sharpe_annualized(&equity_curve);
+        let sortino_ratio = calc_sortino_annualized(&equity_curve);
 
         Self {
             total_return,
             total_return_pct,
             sharpe_ratio,
+            sortino_ratio,
             max_drawdown,
             max_drawdown_pct,
             win_rate,
@@ -163,38 +166,58 @@ fn pct(numerator: Decimal, denominator: Decimal) -> Decimal {
     }
 }
 
-fn calc_sharpe_proxy(equity_curve: &[Decimal]) -> Decimal {
-    if equity_curve.len() < 3 {
-        return Decimal::ZERO;
-    }
+const TRADING_DAYS_PER_YEAR: f64 = 252.0;
 
-    let mut returns: Vec<f64> = Vec::with_capacity(equity_curve.len() - 1);
+fn build_returns(equity_curve: &[Decimal]) -> Vec<f64> {
+    let mut returns = Vec::with_capacity(equity_curve.len().saturating_sub(1));
     for i in 1..equity_curve.len() {
         let prev = equity_curve[i - 1].to_f64().unwrap_or(0.0);
         let curr = equity_curve[i].to_f64().unwrap_or(0.0);
-        if prev <= 0.0 {
-            continue;
+        if prev > 0.0 {
+            returns.push((curr - prev) / prev);
         }
-        returns.push((curr - prev) / prev);
     }
+    returns
+}
+
+// Annualized Sharpe ratio (risk-free rate = 0), annualization factor √252.
+fn calc_sharpe_annualized(equity_curve: &[Decimal]) -> Decimal {
+    if equity_curve.len() < 3 {
+        return Decimal::ZERO;
+    }
+    let returns = build_returns(equity_curve);
     if returns.len() < 2 {
         return Decimal::ZERO;
     }
-
     let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let var = returns
-        .iter()
-        .map(|r| {
-            let d = *r - mean;
-            d * d
-        })
-        .sum::<f64>()
-        / returns.len() as f64;
+    let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
     let std = var.sqrt();
     if std <= 0.0 {
         return Decimal::ZERO;
     }
+    Decimal::from_f64_retain(mean / std * TRADING_DAYS_PER_YEAR.sqrt()).unwrap_or(Decimal::ZERO)
+}
 
-    // Per-event Sharpe proxy (risk-free ~ 0 for short horizon backtests).
-    Decimal::from_f64_retain(mean / std).unwrap_or(Decimal::ZERO)
+// Annualized Sortino ratio (risk-free rate = 0), downside deviation uses all periods.
+fn calc_sortino_annualized(equity_curve: &[Decimal]) -> Decimal {
+    if equity_curve.len() < 3 {
+        return Decimal::ZERO;
+    }
+    let returns = build_returns(equity_curve);
+    if returns.len() < 2 {
+        return Decimal::ZERO;
+    }
+    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+    // Downside variance: sum of squared negative returns divided by total N.
+    let downside_var = returns
+        .iter()
+        .map(|&r| if r < 0.0 { r * r } else { 0.0 })
+        .sum::<f64>()
+        / returns.len() as f64;
+    let downside_std = downside_var.sqrt();
+    if downside_std <= 0.0 {
+        return if mean > 0.0 { Decimal::from(99) } else { Decimal::ZERO };
+    }
+    Decimal::from_f64_retain(mean / downside_std * TRADING_DAYS_PER_YEAR.sqrt())
+        .unwrap_or(Decimal::ZERO)
 }
