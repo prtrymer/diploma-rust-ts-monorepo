@@ -538,3 +538,208 @@ fn decimal_sqrt(value: Decimal) -> Decimal {
     }
     x
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::domain::models::{Candle, Timeframe};
+    use chrono::{TimeZone, Utc};
+    use rust_decimal_macros::dec;
+
+    fn candle(open: Decimal, high: Decimal, low: Decimal, close: Decimal, volume: i64) -> Candle {
+        Candle {
+            symbol: "TEST".to_string(),
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap(),
+            timeframe: Timeframe::OneMin,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            trades_count: None,
+            vwap: None,
+        }
+    }
+
+    fn closes(values: &[i64]) -> Vec<Candle> {
+        values
+            .iter()
+            .map(|v| {
+                let d = Decimal::from(*v);
+                candle(d, d, d, d, 1000)
+            })
+            .collect()
+    }
+
+    fn scalar(value: FeatureValue) -> Decimal {
+        match value {
+            FeatureValue::Scalar(v) => v,
+            other => panic!("expected scalar, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn sma_returns_mean_of_window() {
+        let data = closes(&[1, 2, 3, 4, 5]);
+        let v = scalar(SmaFeature::new(5).calculate(&data).unwrap());
+        assert_eq!(v, dec!(3));
+    }
+
+    #[test]
+    fn sma_uses_only_last_period_values() {
+        let data = closes(&[100, 100, 2, 4, 6]);
+        let v = scalar(SmaFeature::new(3).calculate(&data).unwrap());
+        assert_eq!(v, dec!(4));
+    }
+
+    #[test]
+    fn sma_missing_when_not_enough_data() {
+        let data = closes(&[1, 2]);
+        assert!(matches!(
+            SmaFeature::new(3).calculate(&data).unwrap(),
+            FeatureValue::Missing
+        ));
+    }
+
+    #[test]
+    fn ema_equals_price_for_constant_series() {
+        let data = closes(&[10; 30]);
+        let v = scalar(EmaFeature::new(12).calculate(&data).unwrap());
+        assert_eq!(v, dec!(10));
+    }
+
+    #[test]
+    fn ema_reacts_faster_than_sma_to_recent_jump() {
+        let mut series = vec![100i64; 19];
+        series.push(200);
+        let data = closes(&series);
+        let ema = scalar(EmaFeature::new(10).calculate(&data).unwrap());
+        let sma = scalar(SmaFeature::new(10).calculate(&data).unwrap());
+        assert!(ema > sma);
+    }
+
+    #[test]
+    fn rsi_is_100_when_only_gains() {
+        let data = closes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        let v = scalar(RsiFeature::new(14).calculate(&data).unwrap());
+        assert_eq!(v, dec!(100));
+    }
+
+    #[test]
+    fn rsi_is_50_for_alternating_equal_moves() {
+        let mut series = Vec::with_capacity(15);
+        let mut price = 100i64;
+        for i in 0..15 {
+            series.push(price);
+            price += if i % 2 == 0 { 1 } else { -1 };
+        }
+        let data = closes(&series);
+        let v = scalar(RsiFeature::new(14).calculate(&data).unwrap());
+        assert_eq!(v, dec!(50));
+    }
+
+    #[test]
+    fn macd_zero_on_constant_series() {
+        let data = closes(&[50; 30]);
+        let v = scalar(MacdFeature::new().calculate(&data).unwrap());
+        assert_eq!(v, Decimal::ZERO);
+    }
+
+    #[test]
+    fn bollinger_bands_ordered_centered_and_symmetric() {
+        let data = closes(&[
+            10, 12, 14, 16, 18, 20, 18, 16, 14, 12, 10, 12, 14, 16, 18, 20, 18, 16, 14, 12,
+        ]);
+        let bands = match BollingerBandsFeature::new(20, dec!(2)).calculate(&data).unwrap() {
+            FeatureValue::Vector(v) => v,
+            other => panic!("expected vector, got {:?}", other),
+        };
+        assert_eq!(bands.len(), 3);
+        assert!(bands[0] < bands[1] && bands[1] < bands[2]);
+        let sma = scalar(SmaFeature::new(20).calculate(&data).unwrap());
+        assert_eq!(bands[1], sma);
+        assert_eq!(bands[1] - bands[0], bands[2] - bands[1]);
+    }
+
+    #[test]
+    fn momentum_is_relative_price_change() {
+        let data = closes(&[100, 100, 100, 100, 100, 110]);
+        let v = scalar(MomentumFeature::new(5).calculate(&data).unwrap());
+        assert_eq!(v, dec!(0.1));
+    }
+
+    #[test]
+    fn zscore_zero_for_constant_series() {
+        let data = closes(&[42; 20]);
+        let v = scalar(MeanReversionFeature::new(20).calculate(&data).unwrap());
+        assert_eq!(v, Decimal::ZERO);
+    }
+
+    #[test]
+    fn zscore_positive_when_price_above_mean() {
+        let mut series = vec![100i64; 19];
+        series.push(120);
+        let data = closes(&series);
+        let v = scalar(MeanReversionFeature::new(20).calculate(&data).unwrap());
+        assert!(v > Decimal::ZERO);
+    }
+
+    #[test]
+    fn volatility_zero_for_constant_prices() {
+        let data = closes(&[75; 16]);
+        let v = scalar(VolatilityFeature::new(14).calculate(&data).unwrap());
+        assert_eq!(v, Decimal::ZERO);
+    }
+
+    #[test]
+    fn vol_cluster_missing_when_short_window_not_less_than_long() {
+        let data = closes(&[10; 30]);
+        assert!(matches!(
+            VolatilityClusteringFeature::new(20, 20)
+                .calculate(&data)
+                .unwrap(),
+            FeatureValue::Missing
+        ));
+    }
+
+    #[test]
+    fn vol_cluster_positive_for_noisy_series() {
+        let mut series = Vec::with_capacity(30);
+        for i in 0..30 {
+            series.push(if i % 2 == 0 { 100 } else { 102 });
+        }
+        let data = closes(&series);
+        let v = scalar(
+            VolatilityClusteringFeature::new(5, 20)
+                .calculate(&data)
+                .unwrap(),
+        );
+        assert!(v > Decimal::ZERO);
+    }
+
+    #[test]
+    fn bid_ask_proxy_is_range_over_close() {
+        let data = vec![candle(dec!(100), dec!(102), dec!(98), dec!(100), 1000)];
+        let v = scalar(BidAskSpreadProxyFeature::new().calculate(&data).unwrap());
+        assert_eq!(v, dec!(0.04));
+    }
+
+    #[test]
+    fn liquidity_imbalance_zero_for_constant_volume() {
+        let data = closes(&[10; 20]);
+        let v = scalar(
+            LiquidityImbalanceProxyFeature::new(20)
+                .calculate(&data)
+                .unwrap(),
+        );
+        assert_eq!(v, Decimal::ZERO);
+    }
+
+    #[test]
+    fn order_flow_proxy_sign_follows_candle_body() {
+        let mut data = closes(&[100; 19]);
+        data.push(candle(dec!(100), dec!(106), dec!(99), dec!(105), 1000));
+        let v = scalar(OrderFlowProxyFeature::new(20).calculate(&data).unwrap());
+        assert!(v > Decimal::ZERO);
+    }
+}

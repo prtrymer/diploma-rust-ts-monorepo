@@ -45,3 +45,51 @@ impl Portfolio {
         self.get_total_value() - self.initial_capital
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    fn position(symbol: &str, quantity: Decimal, avg_entry: Decimal, current: Decimal) -> Position {
+        Position {
+            symbol: symbol.to_string(),
+            quantity,
+            avg_entry_price: avg_entry,
+            current_price: current,
+            unrealized_pnl: (current - avg_entry) * quantity,
+            realized_pnl: Decimal::ZERO,
+            last_updated: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn new_portfolio_has_no_positions_and_full_cash() {
+        let p = Portfolio::new(dec!(10000));
+        assert!(p.positions.is_empty());
+        assert_eq!(p.cash, dec!(10000));
+        assert_eq!(p.get_total_pnl(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn total_value_sums_cash_and_positions() {
+        let mut p = Portfolio::new(dec!(100000));
+        p.cash = dec!(50000);
+        p.positions.insert(
+            "AAPL".to_string(),
+            position("AAPL", dec!(100), dec!(400), dec!(450)),
+        );
+        assert_eq!(p.get_total_value(), dec!(95000));
+    }
+
+    #[test]
+    fn total_pnl_is_relative_to_initial_capital() {
+        let mut p = Portfolio::new(dec!(100000));
+        p.cash = dec!(50000);
+        p.positions.insert(
+            "AAPL".to_string(),
+            position("AAPL", dec!(100), dec!(400), dec!(450)),
+        );
+        assert_eq!(p.get_total_pnl(), dec!(-5000));
+    }
+}

@@ -291,3 +291,148 @@ impl PredictionModel for WeightedEnsembleModel {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::domain::models::FeatureValue;
+    use rust_decimal_macros::dec;
+
+    struct ConstModel {
+        label: String,
+        direction: SignalDirection,
+        confidence: Decimal,
+    }
+
+    #[async_trait]
+    impl PredictionModel for ConstModel {
+        fn name(&self) -> &str {
+            &self.label
+        }
+
+        async fn predict(&self, _features: &FeatureSet) -> Result<Prediction> {
+            Ok(Prediction {
+                direction: self.direction,
+                confidence: self.confidence,
+                model_name: self.label.clone(),
+            })
+        }
+    }
+
+    fn const_model(direction: SignalDirection, confidence: Decimal) -> Arc<dyn PredictionModel> {
+        Arc::new(ConstModel {
+            label: "const".to_string(),
+            direction,
+            confidence,
+        })
+    }
+
+    fn features() -> FeatureSet {
+        FeatureSet::new("TEST".to_string())
+    }
+
+    #[tokio::test]
+    async fn ensemble_combines_submodel_scores_by_weight() {
+        let model = WeightedEnsembleModel::new(
+            vec![
+                (const_model(SignalDirection::Long, dec!(1)), dec!(0.75)),
+                (const_model(SignalDirection::Short, dec!(1)), dec!(0.25)),
+            ],
+            dec!(0.01),
+        );
+        let p = model.predict(&features()).await.unwrap();
+        assert_eq!(p.direction, SignalDirection::Long);
+        assert_eq!(p.confidence, dec!(0.5));
+    }
+
+    #[tokio::test]
+    async fn ensemble_emits_exit_within_signal_deadzone() {
+        let model = WeightedEnsembleModel::new(
+            vec![
+                (const_model(SignalDirection::Long, dec!(1)), dec!(0.5)),
+                (const_model(SignalDirection::Short, dec!(1)), dec!(0.5)),
+            ],
+            dec!(0.01),
+        );
+        let p = model.predict(&features()).await.unwrap();
+        assert_eq!(p.direction, SignalDirection::Exit);
+        assert_eq!(p.confidence, Decimal::ZERO);
+    }
+
+    #[tokio::test]
+    async fn set_weights_normalizes_to_unit_sum() {
+        let model = WeightedEnsembleModel::new(
+            vec![
+                (const_model(SignalDirection::Long, dec!(1)), dec!(1)),
+                (const_model(SignalDirection::Short, dec!(1)), dec!(1)),
+            ],
+            dec!(0.01),
+        );
+        model.set_weights(vec![dec!(2), dec!(6)]).await;
+        let w = model.adaptive_weights.read().await;
+        assert_eq!(w[0], dec!(0.25));
+        assert_eq!(w[1], dec!(0.75));
+    }
+
+    #[tokio::test]
+    async fn learn_shifts_weight_toward_accurate_model() {
+        let model = WeightedEnsembleModel::new(
+            vec![
+                (const_model(SignalDirection::Long, dec!(1)), dec!(0.5)),
+                (const_model(SignalDirection::Short, dec!(1)), dec!(0.5)),
+            ],
+            dec!(0.05),
+        );
+        // realized return is positive: the Long submodel was right
+        model.learn(&features(), dec!(1)).await.unwrap();
+        let w = model.adaptive_weights.read().await;
+        assert!(w[0] > w[1]);
+    }
+
+    #[tokio::test]
+    async fn weights_remain_normalized_after_learning() {
+        let model = WeightedEnsembleModel::new(
+            vec![
+                (const_model(SignalDirection::Long, dec!(1)), dec!(0.5)),
+                (const_model(SignalDirection::Short, dec!(1)), dec!(0.5)),
+            ],
+            dec!(0.05),
+        );
+        model.learn(&features(), dec!(1)).await.unwrap();
+        let w = model.adaptive_weights.read().await;
+        let sum: Decimal = w.iter().copied().sum();
+        assert_eq!(sum, dec!(1));
+    }
+
+    #[tokio::test]
+    async fn heuristic_model_exits_on_empty_features() {
+        let model = EnsembleFeatureModel;
+        let p = model.predict(&features()).await.unwrap();
+        assert_eq!(p.direction, SignalDirection::Exit);
+    }
+
+    #[tokio::test]
+    async fn heuristic_model_goes_long_on_bullish_features() {
+        let mut f = features();
+        f.insert("ema_12".to_string(), FeatureValue::Scalar(dec!(105)));
+        f.insert("ema_26".to_string(), FeatureValue::Scalar(dec!(100)));
+        f.insert("macd".to_string(), FeatureValue::Scalar(dec!(0.5)));
+        f.insert("momentum_5".to_string(), FeatureValue::Scalar(dec!(0.05)));
+        f.insert("momentum_20".to_string(), FeatureValue::Scalar(dec!(0.08)));
+        let p = EnsembleFeatureModel.predict(&f).await.unwrap();
+        assert_eq!(p.direction, SignalDirection::Long);
+        assert!(p.confidence > Decimal::ZERO);
+    }
+
+    #[tokio::test]
+    async fn heuristic_model_goes_short_on_bearish_features() {
+        let mut f = features();
+        f.insert("ema_12".to_string(), FeatureValue::Scalar(dec!(95)));
+        f.insert("ema_26".to_string(), FeatureValue::Scalar(dec!(100)));
+        f.insert("macd".to_string(), FeatureValue::Scalar(dec!(-0.5)));
+        f.insert("momentum_5".to_string(), FeatureValue::Scalar(dec!(-0.05)));
+        f.insert("momentum_20".to_string(), FeatureValue::Scalar(dec!(-0.08)));
+        let p = EnsembleFeatureModel.predict(&f).await.unwrap();
+        assert_eq!(p.direction, SignalDirection::Short);
+    }
+}
