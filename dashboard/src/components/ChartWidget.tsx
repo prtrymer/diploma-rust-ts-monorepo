@@ -8,6 +8,15 @@ interface Props {
   token: string;
 }
 
+// Lightweight Charts renders every time value as UTC — it has no built-in
+// timezone support. To show the chart in the user's local time we shift each
+// UTC unix-seconds timestamp by the local UTC offset. getTimezoneOffset() is
+// evaluated per timestamp so DST transitions are handled correctly.
+function toLocalChartTime(utcSeconds: number): Time {
+  const offsetSeconds = new Date(utcSeconds * 1000).getTimezoneOffset() * 60;
+  return (utcSeconds - offsetSeconds) as Time;
+}
+
 export default function ChartWidget({ symbol, token }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -58,7 +67,7 @@ export default function ChartWidget({ symbol, token }: Props) {
           for (const c of sorted) {
             if (c.time > lastTime) {
               formatted.push({
-                time: c.time as Time,
+                time: toLocalChartTime(c.time),
                 open: c.open,
                 high: c.high,
                 low: c.low,
@@ -97,7 +106,7 @@ export default function ChartWidget({ symbol, token }: Props) {
     // Convert to lightweight-charts markers
     const markers = symbolSignals.map(s => {
       // s.timestamp is ISO string
-      const time = Math.floor(new Date(s.timestamp).getTime() / 1000) as Time;
+      const time = toLocalChartTime(Math.floor(new Date(s.timestamp).getTime() / 1000));
       let color = '#58a6ff';
       let position: 'aboveBar' | 'belowBar' | 'inBar' = 'aboveBar';
       let shape: 'arrowUp' | 'arrowDown' | 'circle' = 'circle';

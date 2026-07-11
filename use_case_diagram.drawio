@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1422" dy="762" grid="0" gridSize="10" guides="1" tooltips="1"
+  connect="1" arrows="1" fold="1" page="0" pageScale="1"
+  pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- ═══════════════════════════════════════════════════
+         SYSTEM BOUNDARY
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="2" value="Система алгоритмічного трейдингу на фінансових ринках"
+      style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;
+             fontSize=14;fontStyle=1;verticalAlign=top;align=center;"
+      vertex="1" parent="1">
+      <mxGeometry x="130" y="20" width="1100" height="970" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         ACTOR: Trader
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="3" value="Trader"
+      style="shape=mxgraph.uml.actor;whiteSpace=wrap;html=1;
+             fillColor=#dae8fc;strokeColor=#6c8ebf;"
+      vertex="1" parent="1">
+      <mxGeometry x="18" y="440" width="60" height="80" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         GROUP 1 — АВТЕНТИФІКАЦІЯ
+         ═══════════════════════════════════════════════════ -->
+
+    <!-- Підсистема -->
+    <mxCell id="4" value="Автентифікація"
+      style="ellipse;whiteSpace=wrap;html=1;
+             fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;
+             fontStyle=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="210" y="100" width="175" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Увійти в систему -->
+    <mxCell id="5" value="Увійти в систему"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="68" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Зареєструватися -->
+    <mxCell id="6" value="Зареєструватися"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="152" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Отримати JWT токен -->
+    <mxCell id="7" value="Отримати JWT токен"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="795" y="100" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         GROUP 2 — УПРАВЛІННЯ СИМВОЛАМИ  [NEW]
+         ═══════════════════════════════════════════════════ -->
+
+    <!-- Підсистема -->
+    <mxCell id="8" value="Управління символами"
+      style="ellipse;whiteSpace=wrap;html=1;
+             fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;
+             fontStyle=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="210" y="370" width="175" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Переглянути список символів -->
+    <mxCell id="9" value="Переглянути список символів"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="258" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Пошук символу по тікеру -->
+    <mxCell id="10" value="Пошук символу по тікеру"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="334" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Додати символ до відстеження [NEW] -->
+    <mxCell id="11" value="Додати символ до відстеження"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;
+             fillColor=#d5e8d4;strokeColor=#82b366;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="410" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Видалити символ з відстеження [NEW] -->
+    <mxCell id="12" value="Видалити символ з відстеження"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;
+             fillColor=#d5e8d4;strokeColor=#82b366;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="478" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         GROUP 3 — ПЕРЕГЛЯД РИНКОВИХ ДАНИХ  [REFINED]
+         ═══════════════════════════════════════════════════ -->
+
+    <!-- Підсистема -->
+    <mxCell id="13" value="Перегляд ринкових даних"
+      style="ellipse;whiteSpace=wrap;html=1;
+             fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;
+             fontStyle=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="210" y="558" width="175" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Переглянути графік символу (OHLCV) [REFINED from "Отримати OHLCV свічки"] -->
+    <mxCell id="14" value="Переглянути графік символу (OHLCV)"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="558" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         GROUP 4 — МОНІТОРИНГ ТОРГОВИХ СИГНАЛІВ
+         ═══════════════════════════════════════════════════ -->
+
+    <!-- Підсистема -->
+    <mxCell id="15" value="Моніторинг торгових сигналів"
+      style="ellipse;whiteSpace=wrap;html=1;
+             fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;
+             fontStyle=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="210" y="683" width="175" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Підключитися до WebSocket / SSE потоку -->
+    <mxCell id="16" value="Підключитися до WebSocket / SSE потоку"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="645" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Переглянути архів торгових сигналів -->
+    <mxCell id="17" value="Переглянути архів торгових сигналів"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="725" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         GROUP 5 — УПРАВЛІННЯ БЕКТЕСТОМ
+         ═══════════════════════════════════════════════════ -->
+
+    <!-- Підсистема -->
+    <mxCell id="18" value="Управління бектестом"
+      style="ellipse;whiteSpace=wrap;html=1;
+             fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;
+             fontStyle=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="210" y="838" width="175" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Запустити бектест за символом -->
+    <mxCell id="19" value="Запустити бектест за символом"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="838" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- UC: Переглянути результати бектесту (PnL) [FIXED: was <<extend>>, now <<include>>] -->
+    <mxCell id="20" value="Переглянути результати бектесту (PnL)"
+      style="ellipse;whiteSpace=wrap;html=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="795" y="838" width="200" height="56" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         EDGES — Trader → Підсистеми
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="21" value="" style="endArrow=none;html=1;" edge="1" source="3" target="4" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="22" value="" style="endArrow=none;html=1;" edge="1" source="3" target="8" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="23" value="" style="endArrow=none;html=1;" edge="1" source="3" target="13" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="24" value="" style="endArrow=none;html=1;" edge="1" source="3" target="15" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="25" value="" style="endArrow=none;html=1;" edge="1" source="3" target="18" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         EDGES — AUTH group
+         ═══════════════════════════════════════════════════ -->
+    <!-- Автентифікація → Увійти в систему -->
+    <mxCell id="26" value="" style="endArrow=none;html=1;" edge="1" source="4" target="5" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <!-- Автентифікація → Зареєструватися -->
+    <mxCell id="27" value="" style="endArrow=none;html=1;" edge="1" source="4" target="6" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <!-- Увійти в систему include Отримати JWT токен [FIXED: тільки логін повертає JWT] -->
+    <mxCell id="28" value="&lt;&lt;include&gt;&gt;"
+      style="dashed=1;endArrow=open;endFill=0;html=1;fontSize=10;fontStyle=2;"
+      edge="1" source="5" target="7" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         EDGES — SYMBOL MANAGEMENT group
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="29" value="" style="endArrow=none;html=1;" edge="1" source="8" target="9" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="30" value="" style="endArrow=none;html=1;" edge="1" source="8" target="10" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="31" value="" style="endArrow=none;html=1;" edge="1" source="8" target="11" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="32" value="" style="endArrow=none;html=1;" edge="1" source="8" target="12" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         EDGES — MARKET DATA group
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="33" value="" style="endArrow=none;html=1;" edge="1" source="13" target="14" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         EDGES — SIGNAL MONITORING group
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="34" value="" style="endArrow=none;html=1;" edge="1" source="15" target="16" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="35" value="" style="endArrow=none;html=1;" edge="1" source="15" target="17" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         EDGES — BACKTEST group
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="36" value="" style="endArrow=none;html=1;" edge="1" source="18" target="19" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <!-- Запустити бектест include Переглянути результати [FIXED: was extend] -->
+    <mxCell id="37" value="&lt;&lt;include&gt;&gt;"
+      style="dashed=1;endArrow=open;endFill=0;html=1;fontSize=10;fontStyle=2;"
+      edge="1" source="19" target="20" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         LEGEND
+         ═══════════════════════════════════════════════════ -->
+    <mxCell id="38" value="Легенда"
+      style="text;html=1;strokeColor=none;fillColor=none;align=left;
+             verticalAlign=middle;spacingLeft=4;fontSize=11;fontStyle=1;"
+      vertex="1" parent="1">
+      <mxGeometry x="1260" y="25" width="80" height="20" as="geometry" />
+    </mxCell>
+    <!-- Нові UC (зелені) -->
+    <mxCell id="39" value=""
+      style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;"
+      vertex="1" parent="1">
+      <mxGeometry x="1260" y="50" width="28" height="18" as="geometry" />
+    </mxCell>
+    <mxCell id="40" value="— новий UC (відсутній в оригіналі)"
+      style="text;html=1;strokeColor=none;fillColor=none;align=left;
+             verticalAlign=middle;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1294" y="50" width="220" height="18" as="geometry" />
+    </mxCell>
+    <!-- Підсистема (сіра) -->
+    <mxCell id="41" value=""
+      style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;"
+      vertex="1" parent="1">
+      <mxGeometry x="1260" y="74" width="28" height="18" as="geometry" />
+    </mxCell>
+    <mxCell id="42" value="— підсистема (група функцій)"
+      style="text;html=1;strokeColor=none;fillColor=none;align=left;
+             verticalAlign=middle;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1294" y="74" width="220" height="18" as="geometry" />
+    </mxCell>
+
+  </root>
+</mxGraphModel>

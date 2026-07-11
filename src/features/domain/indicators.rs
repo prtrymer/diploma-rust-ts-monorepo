@@ -132,6 +132,12 @@ pub struct MacdFeature {
     pub label: String,
 }
 
+impl Default for MacdFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MacdFeature {
     pub fn new() -> Self {
         Self {
@@ -420,6 +426,12 @@ impl Feature for VolatilityClusteringFeature {
 // Approximation of bid-ask spread from candle micro-range.
 pub struct BidAskSpreadProxyFeature {
     pub label: String,
+}
+
+impl Default for BidAskSpreadProxyFeature {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BidAskSpreadProxyFeature {

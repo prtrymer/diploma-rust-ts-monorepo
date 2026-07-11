@@ -1,19 +1,31 @@
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use super::metrics;
 use crate::trading::domain::events::{FillEvent, OrderSide};
 use crate::trading::domain::models::Portfolio;
 
+/// Звіт бектесту. Головні цифри — ЗАВЖДИ net-of-cost (інваріант 2);
+/// gross-поля існують лише як діагностика поруч із net, ніколи замість.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestReport {
+    /// Net-of-cost результат (головний).
     pub total_return: Decimal,
     pub total_return_pct: Decimal,
+    /// Діагностика: сумарні транзакційні витрати (комісія+спред+impact).
+    pub total_costs: Decimal,
+    /// Діагностика: gross = net + витрати. Не замінює net.
+    pub gross_return: Decimal,
+    pub gross_return_pct: Decimal,
     pub sharpe_ratio: Decimal,
     /// None означає: або угод менше 10, або σ_down = 0 (усі trades прибуткові — Sortino не визначений).
     pub sortino_ratio: Option<Decimal>,
     pub max_drawdown: Decimal,
     pub max_drawdown_pct: Decimal,
+    /// Calmar = annual return % / MDD %. None без просадки.
+    pub calmar: Option<Decimal>,
+    /// Оборот за період: торгований нотіонал / середня вартість портфеля.
+    pub turnover: Decimal,
     pub win_rate: Decimal,
     pub total_trades: usize,
     pub winning_trades: usize,
@@ -38,15 +50,15 @@ impl BacktestReport {
         let mut position_qty = Decimal::ZERO;
         let mut avg_entry = Decimal::ZERO;
 
-        let mut peak_equity = initial_capital;
-        let mut max_drawdown = Decimal::ZERO;
         let mut equity_curve: Vec<Decimal> = vec![initial_capital];
-
         let mut trade_pnls: Vec<Decimal> = Vec::new();
+        let mut total_costs = Decimal::ZERO;
+
         for fill in fills {
             if fill.quantity <= Decimal::ZERO || fill.fill_price <= Decimal::ZERO {
                 continue;
             }
+            total_costs += fill.commission;
             match fill.side {
                 OrderSide::Buy => {
                     let qty = fill.quantity;
@@ -79,18 +91,10 @@ impl BacktestReport {
             }
 
             let mark_price = fill.fill_price;
-            let equity = cash + position_qty * mark_price;
-            equity_curve.push(equity);
-            if equity > peak_equity {
-                peak_equity = equity;
-            }
-            let dd = peak_equity - equity;
-            if dd > max_drawdown {
-                max_drawdown = dd;
-            }
+            equity_curve.push(cash + position_qty * mark_price);
         }
 
-        let max_drawdown_pct = pct(max_drawdown, peak_equity);
+        let (max_drawdown, max_drawdown_pct) = metrics::max_drawdown(&equity_curve);
 
         let winning: Vec<Decimal> = trade_pnls
             .iter()
@@ -111,12 +115,9 @@ impl BacktestReport {
         let total_wins: Decimal = winning.iter().copied().sum();
         let total_losses: Decimal = losing.iter().copied().sum();
 
-        let win_rate = if total_trades > 0 {
-            Decimal::from(winning_trades as u64) / Decimal::from(total_trades as u64)
-                * Decimal::from(100)
-        } else {
-            Decimal::ZERO
-        };
+        let win_rate = metrics::hit_rate(&trade_pnls)
+            .map(|h| h * Decimal::ONE_HUNDRED)
+            .unwrap_or(Decimal::ZERO);
 
         let avg_win = if winning_trades > 0 {
             total_wins / Decimal::from(winning_trades as u64)
@@ -131,13 +132,9 @@ impl BacktestReport {
         };
 
         // Undefined when there are no losing trades; keep 0 and let caller print "N/A".
-        let profit_factor = if total_losses > Decimal::ZERO {
-            total_wins / total_losses
-        } else {
-            Decimal::ZERO
-        };
+        let profit_factor = metrics::profit_factor(&trade_pnls).unwrap_or(Decimal::ZERO);
 
-        let sharpe_ratio = calc_sharpe_annualized(&equity_curve);
+        let sharpe_ratio = metrics::sharpe_annualized(&equity_curve);
         // Sortino визначений лише при достатній кількості угод і наявності хоча б одного
         // негативного equity-step (σ_down > 0). При total_trades < 10 вибірка занадто мала.
         const MIN_TRADES_FOR_SORTINO: usize = 10;
@@ -147,13 +144,31 @@ impl BacktestReport {
             None
         };
 
+        // Gross — тільки діагностика поруч із net (інваріант 2).
+        let gross_return = metrics::pnl_after_costs(total_return, -total_costs);
+        let gross_return_pct = pct(gross_return, initial_capital);
+
+        let avg_equity = if equity_curve.is_empty() {
+            initial_capital
+        } else {
+            equity_curve.iter().copied().sum::<Decimal>()
+                / Decimal::from(equity_curve.len() as u64)
+        };
+        let turnover = metrics::turnover(fills, avg_equity);
+        let calmar = metrics::calmar(total_return_pct, max_drawdown_pct);
+
         Self {
             total_return,
             total_return_pct,
+            total_costs,
+            gross_return,
+            gross_return_pct,
             sharpe_ratio,
             sortino_ratio,
             max_drawdown,
             max_drawdown_pct,
+            calmar,
+            turnover,
             win_rate,
             total_trades,
             winning_trades,
@@ -176,43 +191,15 @@ fn pct(numerator: Decimal, denominator: Decimal) -> Decimal {
 
 const TRADING_DAYS_PER_YEAR: f64 = 252.0;
 
-fn build_returns(equity_curve: &[Decimal]) -> Vec<f64> {
-    let mut returns = Vec::with_capacity(equity_curve.len().saturating_sub(1));
-    for i in 1..equity_curve.len() {
-        let prev = equity_curve[i - 1].to_f64().unwrap_or(0.0);
-        let curr = equity_curve[i].to_f64().unwrap_or(0.0);
-        if prev > 0.0 {
-            returns.push((curr - prev) / prev);
-        }
-    }
-    returns
-}
-
-// Annualized Sharpe ratio (risk-free rate = 0), annualization factor √252.
-fn calc_sharpe_annualized(equity_curve: &[Decimal]) -> Decimal {
-    if equity_curve.len() < 3 {
-        return Decimal::ZERO;
-    }
-    let returns = build_returns(equity_curve);
-    if returns.len() < 2 {
-        return Decimal::ZERO;
-    }
-    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
-    let std = var.sqrt();
-    if std <= 0.0 {
-        return Decimal::ZERO;
-    }
-    Decimal::from_f64_retain(mean / std * TRADING_DAYS_PER_YEAR.sqrt()).unwrap_or(Decimal::ZERO)
-}
-
 // Annualized Sortino ratio (risk-free rate = 0), downside deviation uses all periods.
 // Повертає None, якщо σ_down = 0 (жодного негативного equity-step — Sortino не визначений).
 fn calc_sortino_annualized(equity_curve: &[Decimal]) -> Option<Decimal> {
+    use rust_decimal::prelude::FromPrimitive;
+
     if equity_curve.len() < 3 {
         return None;
     }
-    let returns = build_returns(equity_curve);
+    let returns = metrics::simple_returns(equity_curve);
     if returns.len() < 2 {
         return None;
     }
@@ -228,5 +215,75 @@ fn calc_sortino_annualized(equity_curve: &[Decimal]) -> Option<Decimal> {
         // σ_down ≈ 0: всі equity-кроки невід'ємні — Sortino математично не визначений (→ +∞).
         return None;
     }
-    Decimal::from_f64_retain(mean / downside_std * TRADING_DAYS_PER_YEAR.sqrt())
+    Decimal::from_f64(mean / downside_std * TRADING_DAYS_PER_YEAR.sqrt())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use rust_decimal_macros::dec;
+    use uuid::Uuid;
+
+    fn fill(side: OrderSide, qty: Decimal, price: Decimal, commission: Decimal) -> FillEvent {
+        FillEvent {
+            id: Uuid::new_v4(),
+            order_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            symbol: "TEST".into(),
+            side,
+            quantity: qty,
+            fill_price: price,
+            commission,
+            slippage: Decimal::ZERO,
+        }
+    }
+
+    // M0.1: net завжди у звіті; gross — окремо; gross - costs == net по угодах.
+    #[test]
+    fn report_separates_net_and_gross() {
+        let initial = dec!(10000);
+        let fills = vec![
+            fill(OrderSide::Buy, dec!(10), dec!(100), dec!(5)),
+            fill(OrderSide::Sell, dec!(10), dec!(110), dec!(5)),
+        ];
+        let mut portfolio = Portfolio::new(initial);
+        // Емуляція фінального стану: 10 куплено за 1000 (+5), продано за 1100 (−5).
+        portfolio.cash = initial - dec!(1000) - dec!(5) + dec!(1100) - dec!(5);
+
+        let report = BacktestReport::from_fills_and_portfolio(&fills, &portfolio, initial);
+        assert_eq!(report.total_costs, dec!(10));
+        assert_eq!(report.total_return, dec!(90)); // 100 gross − 10 costs
+        assert_eq!(report.gross_return, dec!(100));
+        assert_eq!(report.gross_return - report.total_costs, report.total_return);
+    }
+
+    // M0.1: нульові витрати → net == gross (регресійний sanity).
+    #[test]
+    fn zero_costs_make_net_equal_gross() {
+        let initial = dec!(10000);
+        let fills = vec![
+            fill(OrderSide::Buy, dec!(10), dec!(100), Decimal::ZERO),
+            fill(OrderSide::Sell, dec!(10), dec!(110), Decimal::ZERO),
+        ];
+        let mut portfolio = Portfolio::new(initial);
+        portfolio.cash = initial + dec!(100);
+
+        let report = BacktestReport::from_fills_and_portfolio(&fills, &portfolio, initial);
+        assert_eq!(report.total_costs, Decimal::ZERO);
+        assert_eq!(report.total_return, report.gross_return);
+        assert_eq!(report.total_return_pct, report.gross_return_pct);
+    }
+
+    #[test]
+    fn turnover_present_in_report() {
+        let initial = dec!(10000);
+        let fills = vec![
+            fill(OrderSide::Buy, dec!(10), dec!(100), Decimal::ZERO),
+            fill(OrderSide::Sell, dec!(10), dec!(100), Decimal::ZERO),
+        ];
+        let portfolio = Portfolio::new(initial);
+        let report = BacktestReport::from_fills_and_portfolio(&fills, &portfolio, initial);
+        assert!(report.turnover > Decimal::ZERO);
+    }
 }

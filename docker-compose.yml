@@ -25,7 +25,7 @@ services:
       JWT_SECRET: docker-dev-secret
       USE_SIMULATION: "false"
       BACKTEST_FETCH_MISSING: "false"
-      BACKTEST_MIN_CONFIDENCE: "0.01"
+      BACKTEST_MIN_CONFIDENCE: "0.1"
       MIN_CONFIDENCE: "0.02"
       HIST_SYNC_ON_START: "false"
 
@@ -77,7 +77,8 @@ services:
       test: ["CMD", "nc", "-z", "localhost", "2181"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 15s
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -108,8 +109,8 @@ services:
         ]
       interval: 10s
       timeout: 10s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 60s
 
   kafka-init:
     image: confluentinc/cp-kafka:7.5.0

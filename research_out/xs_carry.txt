@@ -1,0 +1,17 @@
+Config hash: 0a440a7bcfc90c9a29f6bf11142ecf4a799e4e24c9ad16aee7c01aa5f4a2c3fa
+XS carry universe: 39 перпів (survivorship-застереження: тільки ЖИВІ symbols з API)
+xs-параметри: trailing=63 інтервалів, ребаланс кожні 42 інтервалів, банда 0.15
+
+=== Cross-Sectional Funding Carry: top-10 з 39 перпів, ребаланс раз на тиждень ===
+Розріз IS/OOS: 2025-09-17 08:00:00 UTC
+
+--- Сценарій витрат: taker 0.045%+спред ---
+IS : net=12032.60 funding=12962.54 costs=929.93 price=-0.00 sharpe=6.638 mdd%=0.12 rebalances=78 symbols=21
+OOS: net=8088.59 funding=8973.30 costs=884.71 price=-0.00 sharpe=4.436 mdd%=1.42 rebalances=56 symbols=26
+KILL-КРИТЕРІЙ (≥1.0 для кошика): пройдено ✓
+
+--- Сценарій витрат: maker 0.018% ---
+IS : net=12633.66 funding=12982.30 costs=348.63 price=-0.00 sharpe=7.153 mdd%=0.11 rebalances=78 symbols=21
+OOS: net=8671.80 funding=8994.05 costs=322.25 price=0.00 sharpe=4.862 mdd%=1.41 rebalances=56 symbols=26
+KILL-КРИТЕРІЙ (≥1.0 для кошика): пройдено ✓
+Run 625b0e09-8660-47e1-a213-74cce71e6c3a logged to runs/runs.jsonl (config 0a440a7bcfc9)

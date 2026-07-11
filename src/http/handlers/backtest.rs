@@ -182,10 +182,11 @@ pub async fn run_backtest(
         60,
     ))) as Arc<RwLock<dyn StrategyPort>>;
 
-    // --- Broker ---
+    // --- Broker (модель витрат і сайзинг — з єдиного RunConfig, M0.4) ---
+    let run_config = crate::shared::run_config::RunConfig::default();
     let broker = Arc::new(SimpleBrokerSimulator {
         slippage_pct: dec!(0.001),
-        commission: dec!(1.00),
+        cost_model: crate::trading::domain::costs::cost_model_from_config(&run_config.costs),
     }) as Arc<dyn BrokerSimulatorPort>;
 
     // --- Portfolio ---
@@ -194,12 +195,9 @@ pub async fn run_backtest(
 
     // --- Execution ---
     let execution_handler = Arc::new(SimpleExecutionHandler {
-        default_quantity: dec!(0),
-        max_position_pct: dec!(0.65),
-        min_trade_quantity: dec!(1),
-        stop_loss_pct: dec!(0.03),
-        take_profit_pct: dec!(0.02),
-        reserve_cash_pct: dec!(0.02),
+        sizer: crate::trading::domain::sizing::PositionSizer::from_config(
+            run_config.sizing.clone(),
+        ),
         portfolio: Some(portfolio_manager.clone()),
     }) as Arc<dyn ExecutionHandlerPort>;
 
@@ -230,7 +228,7 @@ pub async fn run_backtest(
     let consumer_strategy = match KafkaConsumerAdapter::new(
         &brokers,
         &format!("http-bt-strategy-{}", ts),
-        &[market_topic.clone()],
+        std::slice::from_ref(&market_topic),
     ) {
         Ok(c) => Arc::new(c),
         Err(e) => {
@@ -244,7 +242,7 @@ pub async fn run_backtest(
     let consumer_execution = match KafkaConsumerAdapter::new(
         &brokers,
         &format!("http-bt-execution-{}", ts),
-        &[signal_topic.clone()],
+        std::slice::from_ref(&signal_topic),
     ) {
         Ok(c) => Arc::new(c),
         Err(e) => {
@@ -258,7 +256,7 @@ pub async fn run_backtest(
     let consumer_broker = match KafkaConsumerAdapter::new(
         &brokers,
         &format!("http-bt-broker-{}", ts),
-        &[order_topic.clone()],
+        std::slice::from_ref(&order_topic),
     ) {
         Ok(c) => Arc::new(c),
         Err(e) => {
@@ -272,7 +270,7 @@ pub async fn run_backtest(
     let consumer_portfolio = match KafkaConsumerAdapter::new(
         &brokers,
         &format!("http-bt-portfolio-{}", ts),
-        &[fill_topic.clone()],
+        std::slice::from_ref(&fill_topic),
     ) {
         Ok(c) => Arc::new(c),
         Err(e) => {

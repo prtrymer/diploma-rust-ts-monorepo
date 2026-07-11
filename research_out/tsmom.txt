@@ -1,0 +1,20 @@
+Config hash: ad3b32e3b365d217e43797c18cffbbf15cca634b73bbea193154207ac4aea3a1
+Loaded 8 symbols × 2161 bars: ["ADAUSDT", "BNBUSDT", "BTCUSDT", "DOGEUSDT", "ETHUSDT", "LTCUSDT", "SOLUSDT", "XRPUSDT"]
+
+=== Comparative Report (net-of-cost, single period) ===
+Strategy                  NetRet%  GrossRet%     Costs    Sharpe    MedSh      MDD%  Turnover  Trades
+----------------------------------------------------------------------------------------------------
+tsmom                       40.81      41.33    525.02      0.67     0.58     10.94      5.63     208
+buy_and_hold              1013.53    1014.63   1095.14      0.74     0.34     84.65      0.88       8
+equal_weight              1924.30    1941.46  17168.13      0.86     0.48     78.13     10.61     361
+sixty_forty                939.56     944.28   4716.10      0.89     0.48     57.79      7.03     371
+
+=== Walk-Forward (OOS only, net-of-cost) ===
+  test [1512, 1674): ret 11.24% | sharpe 1.60 | mdd 7.72% | trades 25 | costs 85.35
+  test [1674, 1836): ret 6.49% | sharpe 1.24 | mdd 4.80% | trades 25 | costs 69.94
+  test [1836, 1998): ret -1.06% | sharpe -0.29 | mdd 4.12% | trades 17 | costs 53.98
+  test [1998, 2161): ret -2.07% | sharpe -2.13 | mdd 2.09% | trades 3 | costs 12.51
+Median OOS Sharpe: 0.473 | Median OOS Return: 2.72%
+Deflated Sharpe (N trials=9): 0.0023 ⚠
+GATE M2.1: OOS Sharpe 0.4730806067876627 ≥ 0.4 — движок відтворює TSMOM ✓
+Run 9a99757e-2d90-4bb5-bbf5-bd86bf1c7d20 logged to runs/runs.jsonl (config ad3b32e3b365)

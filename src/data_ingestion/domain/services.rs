@@ -2,7 +2,6 @@ use crate::data_ingestion::domain::models::StreamMessage;
 use crate::data_ingestion::ports::{DataSourcePort, MessageProducerPort};
 use anyhow::Result;
 use chrono::Utc;
-use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

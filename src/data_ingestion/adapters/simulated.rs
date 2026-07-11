@@ -138,7 +138,7 @@ impl DataSourcePort for SimulatedDataSource {
                 source:    "simulation".to_string(),
             });
 
-            current_ts = current_ts + step;
+            current_ts += step;
         }
 
         Ok(quotes)

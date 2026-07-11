@@ -1,3 +1,4 @@
+pub mod funding;
 mod inbound;
 mod outbound;
 

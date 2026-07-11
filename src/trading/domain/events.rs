@@ -3,6 +3,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::trading::domain::costs::MarketContext;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SignalDirection {
     Long,
@@ -33,6 +35,9 @@ pub struct SignalEvent {
     pub strength: Decimal,
     pub strategy_name: String,
     pub metadata: Option<String>,
+    /// Ринковий контекст на момент сигналу — для моделі витрат (M0.1).
+    #[serde(default)]
+    pub market_context: Option<MarketContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +51,9 @@ pub struct OrderEvent {
     pub order_type: OrderType,
     pub limit_price: Option<Decimal>,
     pub stop_price: Option<Decimal>,
+    /// Прокинутий із сигналу контекст — брокер передає його в CostModel.
+    #[serde(default)]
+    pub market_context: Option<MarketContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

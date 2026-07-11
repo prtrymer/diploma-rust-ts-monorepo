@@ -14,6 +14,8 @@ use super::models::{Prediction, PredictionModel};
 use crate::features::domain::models::FeatureSet;
 use crate::trading::domain::events::SignalDirection;
 
+type FittedForest = RandomForestRegressor<f64, f64, DenseMatrix<f64>, Vec<f64>>;
+
 pub struct RandomForestLikeModel {
     feature_keys: Vec<String>,
     window: usize,
@@ -22,9 +24,11 @@ pub struct RandomForestLikeModel {
     n_trees: usize,
     max_depth: u16,
     decision_threshold: f64,
+    /// Фіксований сід (інваріант 4: детермінізм ML-ансамблю, M0.5).
+    seed: u64,
     samples: RwLock<VecDeque<(Vec<f64>, f64)>>,
     updates: RwLock<usize>,
-    model: RwLock<Option<RandomForestRegressor<f64, f64, DenseMatrix<f64>, Vec<f64>>>>,
+    model: RwLock<Option<FittedForest>>,
 }
 
 impl RandomForestLikeModel {
@@ -41,6 +45,29 @@ impl RandomForestLikeModel {
         max_depth: u16,
         decision_threshold: f64,
     ) -> Self {
+        Self::new_with_params_and_seed(
+            feature_keys,
+            window,
+            min_samples,
+            train_every,
+            n_trees,
+            max_depth,
+            decision_threshold,
+            crate::shared::run_config::EnsembleConfig::default().seed,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_params_and_seed(
+        feature_keys: Vec<String>,
+        window: usize,
+        min_samples: usize,
+        train_every: usize,
+        n_trees: usize,
+        max_depth: u16,
+        decision_threshold: f64,
+        seed: u64,
+    ) -> Self {
         Self {
             feature_keys,
             window,
@@ -49,6 +76,7 @@ impl RandomForestLikeModel {
             n_trees,
             max_depth,
             decision_threshold,
+            seed,
             samples: RwLock::new(VecDeque::with_capacity(window)),
             updates: RwLock::new(0),
             model: RwLock::new(None),
@@ -144,7 +172,8 @@ impl PredictionModel for RandomForestLikeModel {
             .map_err(|e| anyhow::anyhow!("matrix build failed: {}", e))?;
         let params = RandomForestRegressorParameters::default()
             .with_n_trees(self.n_trees)
-            .with_max_depth(self.max_depth);
+            .with_max_depth(self.max_depth)
+            .with_seed(self.seed);
         if let Ok(rf) = RandomForestRegressor::fit(&x_m, &y_all, params) {
             *self.model.write().await = Some(rf);
         }

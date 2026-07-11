@@ -1,23 +1,31 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::trading::domain::events::*;
+use crate::trading::domain::sizing::{PositionSizer, SizingRequest};
 use crate::trading::ports::ExecutionHandlerPort;
 use crate::trading::ports::PortfolioPort;
 
+/// Перетворює сигнали на ордери. Розмір позиції та SL/TP делеговані єдиному
+/// domain-компоненту `PositionSizer` (одна конфігурація — одна правда).
+///
+/// Детермінізм: час ордера = час сигналу (ринковий), id виводиться з id
+/// сигналу+сторони, а не з ГВЧ.
 pub struct SimpleExecutionHandler {
-    pub default_quantity: Decimal,
-    pub max_position_pct: Decimal,
-    pub min_trade_quantity: Decimal,
-    pub stop_loss_pct: Decimal,
-    pub take_profit_pct: Decimal,
-    pub reserve_cash_pct: Decimal,
+    pub sizer: PositionSizer,
     pub portfolio: Option<Arc<dyn PortfolioPort>>,
+}
+
+fn deterministic_order_id(signal_id: Uuid, side: OrderSide) -> Uuid {
+    let mut seed = signal_id.as_bytes().to_vec();
+    seed.push(match side {
+        OrderSide::Buy => 0x01,
+        OrderSide::Sell => 0x02,
+    });
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, &seed)
 }
 
 #[async_trait]
@@ -40,15 +48,16 @@ impl ExecutionHandlerPort for SimpleExecutionHandler {
 
         let mk_order = |side: OrderSide, quantity: Decimal| -> OrderEvent {
             OrderEvent {
-                id: Uuid::new_v4(),
+                id: deterministic_order_id(signal.id, side),
                 signal_id: signal.id,
-                timestamp: Utc::now(),
+                timestamp: signal.timestamp,
                 symbol: signal.symbol.clone(),
                 side,
                 quantity,
                 order_type: OrderType::Market,
                 limit_price,
                 stop_price: None,
+                market_context: signal.market_context.clone(),
             }
         };
 
@@ -62,39 +71,28 @@ impl ExecutionHandlerPort for SimpleExecutionHandler {
 
             if current_qty > Decimal::ZERO {
                 if let Some(position) = current_pos.as_ref() {
-                    let stop_price = position.avg_entry_price * (Decimal::ONE - self.stop_loss_pct);
-                    if price <= stop_price {
+                    if price <= self.sizer.stop_loss_price(position.avg_entry_price) {
                         return Ok(Some(mk_order(OrderSide::Sell, current_qty)));
                     }
-                    let take_profit_price =
-                        position.avg_entry_price * (Decimal::ONE + self.take_profit_pct);
-                    if price >= take_profit_price {
+                    if price >= self.sizer.take_profit_price(position.avg_entry_price) {
                         return Ok(Some(mk_order(OrderSide::Sell, current_qty)));
                     }
                 }
             }
 
             let quantity = match signal.direction {
-                SignalDirection::Long => {
-                    let total_value = portfolio.get_total_value();
-                    let max_notional = (total_value * self.max_position_pct).max(Decimal::ZERO);
-                    let current_notional = current_qty * price;
-                    let strength = signal.strength.clamp(dec!(0.10), Decimal::ONE);
-                    let target_notional = max_notional * strength;
-                    let additional_cap = (target_notional - current_notional).max(Decimal::ZERO);
-
-                    let cash_reserve = (total_value * self.reserve_cash_pct).max(Decimal::ZERO);
-                    let available_cash = (portfolio.cash - cash_reserve).max(Decimal::ZERO);
-                    let cash_cap = available_cash / price;
-                    let position_cap = additional_cap / price;
-
-                    cash_cap.min(position_cap)
-                }
+                SignalDirection::Long => self.sizer.buy_quantity(&SizingRequest {
+                    price,
+                    total_value: portfolio.get_total_value(),
+                    cash: portfolio.cash,
+                    current_qty,
+                    strength: signal.strength,
+                }),
                 SignalDirection::Short => current_qty,
                 SignalDirection::Exit => current_qty,
             };
 
-            if quantity < self.min_trade_quantity {
+            if quantity < self.sizer.config().min_trade_quantity || quantity <= Decimal::ZERO {
                 return Ok(None);
             }
 
@@ -110,6 +108,9 @@ impl ExecutionHandlerPort for SimpleExecutionHandler {
             SignalDirection::Short => OrderSide::Sell,
             SignalDirection::Exit => return Ok(None),
         };
-        Ok(Some(mk_order(side, self.default_quantity.max(dec!(1)))))
+        Ok(Some(mk_order(
+            side,
+            self.sizer.config().min_trade_quantity.max(Decimal::ONE),
+        )))
     }
 }

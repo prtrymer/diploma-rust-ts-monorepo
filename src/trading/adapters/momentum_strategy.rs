@@ -160,8 +160,34 @@ impl StrategyPort for MomentumStrategy {
         self.last_signal_time
             .insert(tick.symbol.clone(), tick.timestamp);
 
+        // Ринковий контекст для моделі витрат (M0.1): середній обсяг з
+        // lookback-буфера і волатильність із уже порахованих фіч.
+        let avg_volume = {
+            let buf = self.lookback.get(&tick.symbol).unwrap();
+            if buf.is_empty() {
+                None
+            } else {
+                let total: i64 = buf.iter().map(|c| c.volume).sum();
+                Some(Decimal::from(total) / Decimal::from(buf.len() as u64))
+            }
+        };
+        let volatility = features.get_scalar("volatility_20");
+        let market_context = Some(crate::trading::domain::costs::MarketContext {
+            avg_volume,
+            volatility,
+            spread_pct: features.get_scalar("bid_ask_spread_proxy"),
+        });
+
+        // Детермінований id: похідна від символу+часу+напряму (інваріант 4).
+        let id_seed = format!(
+            "{}|{}|{:?}|{}",
+            tick.symbol,
+            tick.timestamp.timestamp_nanos_opt().unwrap_or_default(),
+            direction,
+            self.name
+        );
         Ok(Some(SignalEvent {
-            id: Uuid::new_v4(),
+            id: Uuid::new_v5(&Uuid::NAMESPACE_OID, id_seed.as_bytes()),
             timestamp: tick.timestamp,
             symbol: tick.symbol.clone(),
             direction,
@@ -170,6 +196,7 @@ impl StrategyPort for MomentumStrategy {
             metadata: Some(serde_json::to_string(&serde_json::json!({
                 "last_price": tick.price.to_string()
             }))?),
+            market_context,
         }))
     }
 

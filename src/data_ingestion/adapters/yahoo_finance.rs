@@ -16,6 +16,12 @@ pub struct YahooFinanceAdapter {
     http_client: reqwest::Client,
 }
 
+impl Default for YahooFinanceAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl YahooFinanceAdapter {
     pub fn new() -> Self {
         let mut headers = HeaderMap::new();

@@ -1,0 +1,84 @@
+# Тижневий дослідницький конвеєр (безкоштовний план):
+#   1) докачує дані з публічного архіву data.binance.vision
+#      (fapi REST з раннерів GitHub недоступний — США заблоковані, CDN працює);
+#   2) переганяє стандартний набір стратегій (funding_ml, xs_carry, tsmom);
+#   3) дописує рядок у RESEARCH_LOG.md і комітить дані+журнал назад у репо.
+#
+# Вартість: ~10-20 хв/тиждень із 2000 безкоштовних хвилин приватного репо.
+# Без платіжної картки в акаунті списання неможливі (ліміт витрат $0).
+
+name: research
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # щопонеділка 06:17 UTC
+  workflow_dispatch: {} # і вручну кнопкою
+
+permissions:
+  contents: write
+
+concurrency:
+  group: research
+  cancel-in-progress: false
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Top-up data from data.binance.vision
+        env:
+          BACKFILL_DAYS: "30" # прогресивний бекфіл OI/long-short
+        run: python3 scripts/topup_data.py
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: System deps (rdkafka cmake build)
+        run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev pkg-config
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --bin quant-backtest
+
+      - name: Run research suite
+        run: |
+          set -o pipefail
+          mkdir -p research_out
+          ./target/release/quant-backtest \
+            --funding-dir datasets/funding --strategy funding_ml \
+            | tee research_out/funding_ml.txt
+          ./target/release/quant-backtest \
+            --funding-dir datasets/funding --strategy xs_carry \
+            --top-k 10 --xs-trailing 63 --xs-rebalance 42 \
+            | tee research_out/xs_carry.txt
+          ./target/release/quant-backtest \
+            --data-dir datasets/daily --strategy tsmom --walk-forward \
+            | grep -vE "^📈|^🚀" | tee research_out/tsmom.txt
+
+      # Тіньовий трейдинг: ex-ante кошик тижня (базлайн + RF, A/B) у
+      # shadow/ledger.jsonl + оцінка минулих тижнів. Git-таймстемп коміту
+      # доводить, що кошик обрано ДО того, як тиждень відбувся.
+      - name: Shadow ledger (ex-ante basket + evaluation)
+        run: |
+          ./target/release/quant-backtest \
+            --funding-dir datasets/funding --strategy shadow_carry --top-k 10 \
+            | tee research_out/shadow.txt
+
+      - name: Append RESEARCH_LOG.md
+        run: python3 scripts/summarize_run.py research_out RESEARCH_LOG.md
+
+      - name: Commit results
+        run: |
+          git config user.name "research-bot"
+          git config user.email "research-bot@users.noreply.github.com"
+          git add datasets runs shadow RESEARCH_LOG.md
+          if git diff --cached --quiet; then
+            echo "Нових даних немає — коміт не потрібен."
+          else
+            git commit -m "research: weekly refresh $(date -u +%F) [skip ci]"
+            git push
+          fi

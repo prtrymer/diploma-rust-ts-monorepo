@@ -36,11 +36,17 @@ use db_con::trading::adapters::execution_handler_kafka::ExecutionKafkaHandler;
 use db_con::trading::adapters::momentum_strategy::MomentumStrategy;
 use db_con::trading::adapters::portfolio_manager::PortfolioManager;
 use db_con::trading::adapters::strategy_handler::StrategyHandler;
+use db_con::trading::domain::costs::cost_model_from_config;
 use db_con::trading::domain::events::{FillEvent, OrderEvent, OrderSide, OrderType};
+use db_con::trading::domain::sizing::PositionSizer;
 use db_con::trading::ports::{
     BrokerSimulatorPort, ExecutionHandlerPort, PortfolioPort, StrategyPort,
 };
+use db_con::database::adapters::run_logger_file::FileRunLogger;
+use db_con::database::adapters::run_logger_pg::PostgresRunLogger;
+use db_con::database::ports::run_logger::{RunLogger, RunRecord};
 use db_con::shared::config::{kafka_brokers, scylla_nodes};
+use db_con::shared::run_config::RunConfig;
 
 #[derive(Clone, Debug)]
 struct BacktestArgs {
@@ -49,20 +55,15 @@ struct BacktestArgs {
     end: DateTime<Utc>,
     capital: Decimal,
     fetch_missing: bool,
-    min_confidence: Decimal,
-    train_split: Decimal,
     trade_start: Option<DateTime<Utc>>,
     walk_forward: bool,
-    wf_windows: usize,
     checkpoint_dir: Option<String>,
     export_dataset: Option<String>,
     mode: String,
     tune_ensemble: bool,
-    min_signal_gap_secs: i64,
-    max_position_pct: Decimal,
-    stop_loss_pct: Decimal,
-    take_profit_pct: Decimal,
-    reserve_cash_pct: Decimal,
+    /// ЄДИНЕ джерело правди для всіх торгових параметрів (M0.4).
+    /// CLI-прапори — лише оverride полів цього конфіга.
+    config: RunConfig,
 }
 
 fn parse_date(s: &str) -> Result<DateTime<Utc>> {
@@ -77,20 +78,46 @@ fn parse_args() -> Result<BacktestArgs> {
     let mut end_str = "2024-12-31".to_string();
     let mut capital = dec!(100000);
     let mut fetch_missing = false;
-    let mut min_confidence = dec!(0.01);
-    let mut train_split = dec!(0.70);
     let mut trade_start: Option<DateTime<Utc>> = None;
     let mut walk_forward = false;
-    let mut wf_windows = 4usize;
     let mut checkpoint_dir: Option<String> = None;
     let mut export_dataset: Option<String> = None;
     let mut mode = "direct".to_string();
     let mut tune_ensemble = false;
-    let mut min_signal_gap_secs = 900i64;
-    let mut max_position_pct = dec!(0.80);
-    let mut stop_loss_pct = dec!(0.01);
-    let mut take_profit_pct = dec!(0.025);
-    let mut reserve_cash_pct = dec!(0.02);
+
+    // M0.4: усі торгові параметри стартують з ЄДИНОГО конфіга (дефолти —
+    // тільки в RunConfig::default()); --config підвантажує повний JSON,
+    // решта прапорів — точкові оverride полів.
+    let mut config = RunConfig::default();
+    if let Some(pos) = args.iter().position(|a| a == "--config") {
+        if let Some(path) = args.get(pos + 1) {
+            let json = std::fs::read_to_string(path)?;
+            config = RunConfig::from_json(&json)?;
+            println!("Loaded config from {path}");
+        }
+    }
+
+    // Утиліти провенансу: друк хеша і diff двох конфігів (M0.4).
+    if args.iter().any(|a| a == "--print-config-hash") {
+        // Врахувати оverride-прапори нижче ПЕРЕД друком неможливо без
+        // повного парсу — тому хеш друкується в main після parse_args.
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--diff-configs") {
+        let a_path = args
+            .get(pos + 1)
+            .ok_or_else(|| anyhow::anyhow!("--diff-configs needs two paths"))?;
+        let b_path = args
+            .get(pos + 2)
+            .ok_or_else(|| anyhow::anyhow!("--diff-configs needs two paths"))?;
+        let a = RunConfig::from_json(&std::fs::read_to_string(a_path)?)?;
+        let b = RunConfig::from_json(&std::fs::read_to_string(b_path)?)?;
+        println!("hash A: {}", a.config_hash());
+        println!("hash B: {}", b.config_hash());
+        for line in a.diff(&b) {
+            println!("  {line}");
+        }
+        std::process::exit(0);
+    }
 
     let mut i = 1;
     while i < args.len() {
@@ -119,13 +146,15 @@ fn parse_args() -> Result<BacktestArgs> {
             }
             "--min-confidence" => {
                 if let Some(c) = args.get(i + 1) {
-                    min_confidence = c.parse().unwrap_or(min_confidence);
+                    config.strategy.min_confidence =
+                        c.parse().unwrap_or(config.strategy.min_confidence);
                 }
                 i += 2;
             }
             "--train-split" => {
                 if let Some(v) = args.get(i + 1) {
-                    train_split = v.parse().unwrap_or(train_split);
+                    config.walk_forward.train_ratio =
+                        v.parse().unwrap_or(config.walk_forward.train_ratio);
                 }
                 i += 2;
             }
@@ -141,7 +170,7 @@ fn parse_args() -> Result<BacktestArgs> {
             }
             "--wf-windows" => {
                 if let Some(v) = args.get(i + 1) {
-                    wf_windows = v.parse().unwrap_or(wf_windows);
+                    config.walk_forward.folds = v.parse().unwrap_or(config.walk_forward.folds);
                 }
                 i += 2;
             }
@@ -166,31 +195,43 @@ fn parse_args() -> Result<BacktestArgs> {
             }
             "--min-signal-gap-secs" => {
                 if let Some(v) = args.get(i + 1) {
-                    min_signal_gap_secs = v.parse().unwrap_or(min_signal_gap_secs);
+                    config.strategy.min_signal_gap_secs =
+                        v.parse().unwrap_or(config.strategy.min_signal_gap_secs);
                 }
                 i += 2;
             }
             "--max-position-pct" => {
                 if let Some(v) = args.get(i + 1) {
-                    max_position_pct = v.parse().unwrap_or(max_position_pct);
+                    config.sizing.max_position_pct =
+                        v.parse().unwrap_or(config.sizing.max_position_pct);
                 }
                 i += 2;
             }
             "--stop-loss-pct" => {
                 if let Some(v) = args.get(i + 1) {
-                    stop_loss_pct = v.parse().unwrap_or(stop_loss_pct);
+                    config.sizing.stop_loss_pct =
+                        v.parse().unwrap_or(config.sizing.stop_loss_pct);
                 }
                 i += 2;
             }
             "--take-profit-pct" => {
                 if let Some(v) = args.get(i + 1) {
-                    take_profit_pct = v.parse().unwrap_or(take_profit_pct);
+                    config.sizing.take_profit_pct =
+                        v.parse().unwrap_or(config.sizing.take_profit_pct);
                 }
                 i += 2;
             }
             "--reserve-cash-pct" => {
                 if let Some(v) = args.get(i + 1) {
-                    reserve_cash_pct = v.parse().unwrap_or(reserve_cash_pct);
+                    config.sizing.reserve_cash_pct =
+                        v.parse().unwrap_or(config.sizing.reserve_cash_pct);
+                }
+                i += 2;
+            }
+            "--save-config" => {
+                if let Some(path) = args.get(i + 1) {
+                    // Записується ПІСЛЯ всіх оverride в main (див. нижче).
+                    std::env::set_var("BACKTEST_SAVE_CONFIG_PATH", path);
                 }
                 i += 2;
             }
@@ -198,26 +239,39 @@ fn parse_args() -> Result<BacktestArgs> {
         }
     }
 
+    config.walk_forward.train_ratio = config
+        .walk_forward
+        .train_ratio
+        .clamp(dec!(0.50), dec!(0.95));
+    config.walk_forward.folds = config.walk_forward.folds.clamp(2, 20);
+    config.strategy.min_signal_gap_secs = config.strategy.min_signal_gap_secs.clamp(10, 3600);
+    config.sizing.max_position_pct = config
+        .sizing
+        .max_position_pct
+        .clamp(dec!(0.05), dec!(1.00));
+    config.sizing.stop_loss_pct = config.sizing.stop_loss_pct.clamp(dec!(0.002), dec!(0.20));
+    config.sizing.take_profit_pct = config
+        .sizing
+        .take_profit_pct
+        .clamp(dec!(0.002), dec!(0.20));
+    config.sizing.reserve_cash_pct = config
+        .sizing
+        .reserve_cash_pct
+        .clamp(dec!(0.00), dec!(0.50));
+
     Ok(BacktestArgs {
         symbol,
         start: parse_date(&start_str)?,
         end: parse_date(&end_str)?,
         capital,
         fetch_missing,
-        min_confidence,
-        train_split: train_split.clamp(dec!(0.50), dec!(0.95)),
         trade_start,
         walk_forward,
-        wf_windows: wf_windows.clamp(2, 20),
         checkpoint_dir,
         export_dataset,
         mode,
         tune_ensemble,
-        min_signal_gap_secs: min_signal_gap_secs.clamp(10, 3600),
-        max_position_pct: max_position_pct.clamp(dec!(0.05), dec!(1.00)),
-        stop_loss_pct: stop_loss_pct.clamp(dec!(0.002), dec!(0.20)),
-        take_profit_pct: take_profit_pct.clamp(dec!(0.002), dec!(0.20)),
-        reserve_cash_pct: reserve_cash_pct.clamp(dec!(0.00), dec!(0.50)),
+        config,
     })
 }
 
@@ -276,17 +330,34 @@ fn model_feature_keys() -> Vec<String> {
     ]
 }
 
-fn build_model() -> Arc<WeightedEnsembleModel> {
-    let fast = Arc::new(CandleLinearModel::new(model_feature_keys(), 0.0020, 0.0))
-        as Arc<dyn PredictionModel>;
-    let medium = Arc::new(CandleLinearModel::new(model_feature_keys(), 0.0010, 0.0))
-        as Arc<dyn PredictionModel>;
-    let slow = Arc::new(CandleLinearModel::new(model_feature_keys(), 0.0005, 0.0))
-        as Arc<dyn PredictionModel>;
+/// Ансамбль будується ВИКЛЮЧНО з EnsembleConfig (M0.4: ваги, learning rates,
+/// deadzone — жодних магічних чисел у коді).
+fn build_model(cfg: &db_con::shared::run_config::EnsembleConfig) -> Arc<WeightedEnsembleModel> {
+    let lr = |i: usize, fallback: f64| cfg.learning_rates.get(i).copied().unwrap_or(fallback);
+    let w = |i: usize, fallback: Decimal| cfg.weights.get(i).copied().unwrap_or(fallback);
+    let fast = Arc::new(CandleLinearModel::new(
+        model_feature_keys(),
+        lr(0, 0.0020) as f32,
+        0.0,
+    )) as Arc<dyn PredictionModel>;
+    let medium = Arc::new(CandleLinearModel::new(
+        model_feature_keys(),
+        lr(1, 0.0010) as f32,
+        0.0,
+    )) as Arc<dyn PredictionModel>;
+    let slow = Arc::new(CandleLinearModel::new(
+        model_feature_keys(),
+        lr(2, 0.0005) as f32,
+        0.0,
+    )) as Arc<dyn PredictionModel>;
 
     Arc::new(WeightedEnsembleModel::new_with_signal_deadzone(
-        vec![(fast, dec!(0.40)), (medium, dec!(0.35)), (slow, dec!(0.25))],
-        dec!(0.01),
+        vec![
+            (fast, w(0, dec!(0.40))),
+            (medium, w(1, dec!(0.35))),
+            (slow, w(2, dec!(0.25))),
+        ],
+        cfg.signal_deadzone,
         dec!(0.0),
     ))
 }
@@ -326,9 +397,9 @@ async fn run_direct_train_test(
     let strategy_impl = Arc::new(RwLock::new(MomentumStrategy::new(
         feature_registry,
         model,
-        60,
-        args.min_confidence,
-        args.min_signal_gap_secs,
+        args.config.strategy.lookback_size,
+        args.config.strategy.min_confidence,
+        args.config.strategy.min_signal_gap_secs,
     )));
     {
         let mut s = strategy_impl.write().await;
@@ -349,18 +420,14 @@ async fn run_direct_train_test(
 
     let portfolio_manager = Arc::new(PortfolioManager::new(args.capital));
     let portfolio_port = portfolio_manager.clone() as Arc<dyn PortfolioPort>;
+    // Сайзинг і витрати — з єдиного конфіга (M0.1/M0.4), спільні для всіх шляхів.
     let execution_handler = SimpleExecutionHandler {
-        default_quantity: dec!(0),
-        max_position_pct: args.max_position_pct,
-        min_trade_quantity: dec!(1),
-        stop_loss_pct: args.stop_loss_pct,
-        take_profit_pct: args.take_profit_pct,
-        reserve_cash_pct: args.reserve_cash_pct,
+        sizer: PositionSizer::from_config(args.config.sizing.clone()),
         portfolio: Some(portfolio_port.clone()),
     };
     let broker = SimpleBrokerSimulator {
         slippage_pct: dec!(0.0002),
-        commission: dec!(0.10),
+        cost_model: cost_model_from_config(&args.config.costs),
     };
 
     let mut fills: Vec<FillEvent> = Vec::new();
@@ -379,20 +446,27 @@ async fn run_direct_train_test(
     }
 
     // Force-close any open position at the end of the test window so PnL/trades are realized.
+    // Детермінізм: час/id ордера — з останнього тіка, не з wall-clock (M0.5).
     if let Some(last_tick) = test_ticks.last() {
         if let Some(position) = portfolio_port.get_position(&last_tick.symbol).await? {
             let qty = position.quantity.max(Decimal::ZERO);
             if qty > Decimal::ZERO {
+                let id_seed = format!(
+                    "final-exit|{}|{}",
+                    last_tick.symbol,
+                    last_tick.timestamp.timestamp_nanos_opt().unwrap_or_default()
+                );
                 let final_exit_order = OrderEvent {
-                    id: uuid::Uuid::new_v4(),
-                    signal_id: uuid::Uuid::new_v4(),
-                    timestamp: Utc::now(),
+                    id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, id_seed.as_bytes()),
+                    signal_id: uuid::Uuid::nil(),
+                    timestamp: last_tick.timestamp,
                     symbol: last_tick.symbol.clone(),
                     side: OrderSide::Sell,
                     quantity: qty,
                     order_type: OrderType::Market,
                     limit_price: Some(last_tick.price),
                     stop_price: None,
+                    market_context: None,
                 };
                 let fill = broker.execute_order(&final_exit_order).await?;
                 portfolio_port.update_on_fill(&fill).await?;
@@ -416,7 +490,7 @@ async fn tune_ensemble_weights(
 ) -> Result<(Vec<Decimal>, Decimal, BacktestReport)> {
     if train_ticks.len() < 700 {
         let default_weights = vec![dec!(0.45), dec!(0.35), dec!(0.20)];
-        let model = build_model();
+        let model = build_model(&args.config.ensemble);
         model.set_weights(default_weights.clone()).await;
         model.set_adaptive_learning_enabled(false).await;
         let fit_cut = (train_ticks.len() * 3) / 4;
@@ -431,7 +505,7 @@ async fn tune_ensemble_weights(
             val,
         )
         .await?;
-        return Ok((default_weights, args.min_confidence, report));
+        return Ok((default_weights, args.config.strategy.min_confidence, report));
     }
 
     let fit_cut = ((train_ticks.len() as f64) * 0.75) as usize;
@@ -452,17 +526,17 @@ async fn tune_ensemble_weights(
         dec!(0.03),
         dec!(0.05),
     ];
-    confidence_grid.push(args.min_confidence);
+    confidence_grid.push(args.config.strategy.min_confidence);
     confidence_grid.sort();
     confidence_grid.dedup();
     for w in candidate_weight_sets() {
         for &conf in &confidence_grid {
-            let model = build_model();
+            let model = build_model(&args.config.ensemble);
             model.set_weights(w.clone()).await;
             model.set_adaptive_learning_enabled(false).await;
 
             let mut tuned_args = args.clone();
-            tuned_args.min_confidence = conf;
+            tuned_args.config.strategy.min_confidence = conf;
 
             let report = run_direct_train_test(
                 &tuned_args,
@@ -571,25 +645,22 @@ async fn build_pipeline(
     let strategy_impl = Arc::new(RwLock::new(MomentumStrategy::new(
         feature_registry,
         model,
-        60,
-        args.min_confidence,
-        args.min_signal_gap_secs,
+        args.config.strategy.lookback_size,
+        args.config.strategy.min_confidence,
+        args.config.strategy.min_signal_gap_secs,
     )));
     let strategy = strategy_impl.clone() as Arc<RwLock<dyn StrategyPort>>;
+    // Той САМИЙ cost model і sizing config, що і в direct-режимі —
+    // інваріант 1 (єдиний шлях коду) доведений тестом M0.5.
     let broker = Arc::new(SimpleBrokerSimulator {
         slippage_pct: dec!(0.0002),
-        commission: dec!(0.10),
+        cost_model: cost_model_from_config(&args.config.costs),
     }) as Arc<dyn BrokerSimulatorPort>;
     let portfolio_manager = Arc::new(PortfolioManager::new(args.capital));
     let portfolio_port = portfolio_manager.clone() as Arc<dyn PortfolioPort>;
 
     let execution_handler = Arc::new(SimpleExecutionHandler {
-        default_quantity: dec!(0),
-        max_position_pct: args.max_position_pct,
-        min_trade_quantity: dec!(1),
-        stop_loss_pct: args.stop_loss_pct,
-        take_profit_pct: args.take_profit_pct,
-        reserve_cash_pct: args.reserve_cash_pct,
+        sizer: PositionSizer::from_config(args.config.sizing.clone()),
         portfolio: Some(portfolio_port.clone()),
     }) as Arc<dyn ExecutionHandlerPort>;
 
@@ -920,12 +991,26 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Провенанс (M0.4): хеш ПОВНОГО конфіга друкується завжди і пишеться в
+    // лог прогонів — питання «з якими параметрами це рахувалось» закрите.
+    let config_hash = args.config.config_hash();
+    if env::args().any(|a| a == "--print-config-hash") {
+        println!("{config_hash}");
+        println!("{}", args.config.to_pretty_json());
+        return Ok(());
+    }
+    if let Ok(path) = env::var("BACKTEST_SAVE_CONFIG_PATH") {
+        std::fs::write(&path, args.config.to_pretty_json())?;
+        println!("Saved config to {path}");
+    }
+
     println!("=== Backtest Configuration ===");
+    println!("Config Hash: {config_hash}");
     println!("Symbol: {}", args.symbol);
     println!("Period: {} to {}", args.start, args.end);
     println!("Initial Capital: {}", args.capital);
-    println!("Min Confidence: {}", args.min_confidence);
-    println!("Train Split: {}", args.train_split);
+    println!("Min Confidence: {}", args.config.strategy.min_confidence);
+    println!("Train Split: {}", args.config.walk_forward.train_ratio);
     println!(
         "Trade Start: {}",
         args.trade_start
@@ -937,11 +1022,18 @@ async fn main() -> Result<()> {
     println!("Tune Ensemble: {}", args.tune_ensemble);
     println!(
         "Risk Params: gap={}s, max_pos={}, stop_loss={}, take_profit={}, reserve_cash={}",
-        args.min_signal_gap_secs,
-        args.max_position_pct,
-        args.stop_loss_pct,
-        args.take_profit_pct,
-        args.reserve_cash_pct
+        args.config.strategy.min_signal_gap_secs,
+        args.config.sizing.max_position_pct,
+        args.config.sizing.stop_loss_pct,
+        args.config.sizing.take_profit_pct,
+        args.config.sizing.reserve_cash_pct
+    );
+    println!(
+        "Costs: fixed={}, pct={}, spread={}, impact={}",
+        args.config.costs.commission_fixed,
+        args.config.costs.commission_pct,
+        args.config.costs.spread_pct,
+        args.config.costs.impact.is_some()
     );
     println!();
 
@@ -967,12 +1059,15 @@ async fn main() -> Result<()> {
         export_dataset(path, &all_candles, feature_registry.clone()).await?;
     }
 
-    let model = build_model();
+    let model = build_model(&args.config.ensemble);
     if let Some(dir) = &args.checkpoint_dir {
         let _ = (model.clone() as Arc<dyn PredictionModel>)
             .load_checkpoint(dir)
             .await;
     }
+
+    // Метрики прогону для provenance-логу (M0.4).
+    let mut run_metrics: Option<serde_json::Value> = None;
 
     if !args.walk_forward {
         let (train_start, train_end, test_start, test_end, train_len, test_len) =
@@ -991,7 +1086,13 @@ async fn main() -> Result<()> {
                     all_candles.len() - split_idx,
                 )
             } else {
-                let split = args.train_split.to_string().parse::<f64>().unwrap_or(0.7);
+                let split = args
+                    .config
+                    .walk_forward
+                    .train_ratio
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.7);
                 let split_idx = ((all_candles.len() as f64) * split) as usize;
                 let split_idx = split_idx.clamp(1, all_candles.len().saturating_sub(1));
                 (
@@ -1038,7 +1139,7 @@ async fn main() -> Result<()> {
             );
             model.set_weights(best).await;
             model.set_adaptive_learning_enabled(false).await;
-            run_args.min_confidence = best_conf;
+            run_args.config.strategy.min_confidence = best_conf;
         }
 
         let report = if args.mode.eq_ignore_ascii_case("direct") {
@@ -1064,12 +1165,22 @@ async fn main() -> Result<()> {
             )
             .await?
         };
-        println!("\n=== Backtest Report ===");
+        println!("\n=== Backtest Report (net-of-cost) ===");
         println!("Final Portfolio Value: {}", report.final_portfolio_value);
         println!(
-            "Total Return: {} ({}%)",
+            "Net Return: {} ({}%)",
             report.total_return, report.total_return_pct
         );
+        // Gross — ТІЛЬКИ діагностика поруч із net, ніколи замість (інваріант 2).
+        println!(
+            "Gross Return (diag.): {} ({}%) | Total Costs: {}",
+            report.gross_return, report.gross_return_pct, report.total_costs
+        );
+        println!("Turnover: {}", report.turnover);
+        match report.calmar {
+            Some(c) => println!("Calmar: {}", c),
+            None => println!("Calmar: N/A (нульова просадка)"),
+        }
         println!("Sharpe Ratio (ann.): {}", report.sharpe_ratio);
         match report.sortino_ratio {
             Some(s) => println!("Sortino Ratio (ann.): {}", s),
@@ -1109,11 +1220,13 @@ async fn main() -> Result<()> {
                 report.total_trades
             );
         }
+        run_metrics = Some(serde_json::to_value(&report)?);
     } else {
         let n = all_candles.len();
-        let window = n / args.wf_windows.max(2);
+        let wf_windows = args.config.walk_forward.folds;
+        let window = n / wf_windows.max(2);
         let mut reports = Vec::new();
-        for i in 1..args.wf_windows {
+        for i in 1..wf_windows {
             let train_end_idx = window * i;
             let test_end_idx = (window * (i + 1)).min(n - 1);
             if train_end_idx + 1 >= test_end_idx {
@@ -1153,7 +1266,7 @@ async fn main() -> Result<()> {
                 );
                 model.set_weights(best).await;
                 model.set_adaptive_learning_enabled(false).await;
-                run_args.min_confidence = best_conf;
+                run_args.config.strategy.min_confidence = best_conf;
             }
             let rep = if args.mode.eq_ignore_ascii_case("direct") {
                 run_direct_train_test(
@@ -1185,29 +1298,117 @@ async fn main() -> Result<()> {
             reports.push(rep);
         }
         if !reports.is_empty() {
+            use db_con::backtest::domain::metrics as qmetrics;
+            use rust_decimal::prelude::ToPrimitive;
+
             let n = Decimal::from(reports.len() as u64);
-            let avg_ret: Decimal =
-                reports.iter().map(|r| r.total_return_pct).sum::<Decimal>() / n;
-            let avg_sharpe: Decimal =
-                reports.iter().map(|r| r.sharpe_ratio).sum::<Decimal>() / n;
+            let rets: Vec<Decimal> = reports.iter().map(|r| r.total_return_pct).collect();
+            let sharpes: Vec<Decimal> = reports.iter().map(|r| r.sharpe_ratio).collect();
+            // M0.3: зведення веде з МЕДІАНИ; середнє — лише діагностика поруч.
+            let median_ret = qmetrics::median(&rets).unwrap_or(Decimal::ZERO);
+            let median_sharpe = qmetrics::median(&sharpes).unwrap_or(Decimal::ZERO);
+            let avg_ret: Decimal = rets.iter().copied().sum::<Decimal>() / n;
+            let avg_sharpe: Decimal = sharpes.iter().copied().sum::<Decimal>() / n;
             let total_trades: usize = reports.iter().map(|r| r.total_trades).sum();
+            let total_costs: Decimal = reports.iter().map(|r| r.total_costs).sum();
 
             let sortino_vals: Vec<Decimal> =
                 reports.iter().filter_map(|r| r.sortino_ratio).collect();
-            let avg_sortino_str = if sortino_vals.is_empty() {
-                "N/A".to_string()
-            } else {
-                let s = sortino_vals.iter().copied().sum::<Decimal>()
-                    / Decimal::from(sortino_vals.len() as u64);
-                s.to_string()
+            let median_sortino_str = qmetrics::median(&sortino_vals)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "N/A".to_string());
+
+            // M1.3: deflated Sharpe. N trials — лічильник прогонів з
+            // provenance-логу (M0.4) + поточний.
+            let trials_logger = FileRunLogger::new("runs/runs.jsonl");
+            let n_trials = trials_logger
+                .count_distinct_configs()
+                .await
+                .unwrap_or(0)
+                .max(1);
+            let deflated = {
+                let vals: Vec<f64> = sharpes.iter().filter_map(|s| s.to_f64()).collect();
+                if vals.len() >= 2 {
+                    let mean = vals.iter().sum::<f64>() / vals.len() as f64;
+                    let var = vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
+                        / vals.len() as f64;
+                    qmetrics::deflated_sharpe_ratio(&qmetrics::DeflatedSharpeInput {
+                        sharpe: median_sharpe.to_f64().unwrap_or(0.0)
+                            / qmetrics::TRADING_DAYS_PER_YEAR.sqrt(),
+                        n_observations: reports.len() * 60, // ~барів на фолд
+                        n_trials,
+                        sharpe_variance: var / qmetrics::TRADING_DAYS_PER_YEAR,
+                        skewness: 0.0,
+                        kurtosis: 3.0,
+                    })
+                } else {
+                    None
+                }
             };
 
-            println!("\n=== Walk-Forward Summary ===");
+            println!("\n=== Walk-Forward Summary (OOS, net-of-cost) ===");
             println!("Folds: {}", reports.len());
-            println!("Average Return: {}%", avg_ret);
-            println!("Average Sharpe: {}", avg_sharpe);
-            println!("Average Sortino: {}", avg_sortino_str);
-            println!("Total Trades: {}", total_trades);
+            println!("Median Return: {}% (mean {}%)", median_ret, avg_ret);
+            println!("Median Sharpe: {} (mean {})", median_sharpe, avg_sharpe);
+            println!("Median Sortino: {}", median_sortino_str);
+            println!("Total Trades: {} | Total Costs: {}", total_trades, total_costs);
+            match deflated {
+                Some(d) => println!(
+                    "Deflated Sharpe (N trials={}): {:.4} {}",
+                    n_trials,
+                    d,
+                    if d >= 0.95 { "✓" } else { "⚠ не переживає корекцію на перебір" }
+                ),
+                None => println!("Deflated Sharpe: N/A"),
+            }
+
+            run_metrics = Some(serde_json::json!({
+                "walk_forward": true,
+                "folds": reports.len(),
+                "median_return_pct": median_ret.to_string(),
+                "median_sharpe": median_sharpe.to_string(),
+                "mean_return_pct": avg_ret.to_string(),
+                "mean_sharpe": avg_sharpe.to_string(),
+                "total_trades": total_trades,
+                "total_costs": total_costs.to_string(),
+                "deflated_sharpe": deflated,
+                "n_trials": n_trials,
+                "fold_reports": reports,
+            }));
+        }
+    }
+
+    // M0.4: кожен прогін пише рядок у runs з config_hash і повним конфігом.
+    // PostgreSQL — коли доступний; файловий JSONL — завжди (fallback).
+    if let Some(metrics) = run_metrics {
+        let record = RunRecord::new(
+            config_hash.clone(),
+            args.config.canonical_json(),
+            serde_json::json!({
+                "symbol": args.symbol,
+                "start": args.start,
+                "end": args.end,
+                "capital": args.capital.to_string(),
+                "mode": args.mode,
+                "results": metrics,
+            }),
+        );
+        let file_logger = FileRunLogger::new("runs/runs.jsonl");
+        match file_logger.log_run(&record).await {
+            Ok(()) => println!(
+                "Run {} logged to runs/runs.jsonl (config {})",
+                record.run_id, &config_hash[..12]
+            ),
+            Err(e) => eprintln!("Failed to log run to file: {e}"),
+        }
+        if let Ok(url) = env::var("DATABASE_URL") {
+            match PostgresRunLogger::new(&url).await {
+                Ok(pg) => match pg.log_run(&record).await {
+                    Ok(()) => println!("Run {} logged to PostgreSQL runs", record.run_id),
+                    Err(e) => eprintln!("PostgreSQL run insert failed: {e}"),
+                },
+                Err(e) => eprintln!("PostgreSQL unavailable ({e}); file log only"),
+            }
         }
     }
 

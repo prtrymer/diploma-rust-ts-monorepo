@@ -9,14 +9,29 @@ use crate::trading::domain::events::{FillEvent, OrderSide};
 use crate::trading::domain::models::{Portfolio, Position};
 use crate::trading::ports::PortfolioPort;
 
+/// Обліковець портфеля. За замовчуванням long-only (поведінка live незмінна);
+/// `new_allowing_short` вмикає шорти для market-neutral стратегій (M3.2).
+///
+/// Інваріант руху через нуль: один філ або закриває позицію (до нуля), або
+/// відкриває/нарощує — двобічні переходи двигун зобов'язаний різати на два
+/// ордери. Це тримає облік середньої ціни входу чесним.
 pub struct PortfolioManager {
     portfolio: Arc<RwLock<Portfolio>>,
+    allow_short: bool,
 }
 
 impl PortfolioManager {
     pub fn new(initial_capital: Decimal) -> Self {
         Self {
             portfolio: Arc::new(RwLock::new(Portfolio::new(initial_capital))),
+            allow_short: false,
+        }
+    }
+
+    pub fn new_allowing_short(initial_capital: Decimal) -> Self {
+        Self {
+            portfolio: Arc::new(RwLock::new(Portfolio::new(initial_capital))),
+            allow_short: true,
         }
     }
 }
@@ -28,7 +43,6 @@ impl PortfolioPort for PortfolioManager {
         if fill.quantity <= Decimal::ZERO {
             return Ok(());
         }
-        let cost = fill.fill_price * fill.quantity + fill.commission;
 
         if !portfolio.positions.contains_key(&fill.symbol) {
             portfolio.positions.insert(
@@ -48,28 +62,83 @@ impl PortfolioPort for PortfolioManager {
         match fill.side {
             OrderSide::Buy => {
                 let position = portfolio.positions.get(&fill.symbol).unwrap();
-                let total_cost = position.avg_entry_price * position.quantity + cost;
-                let new_qty = position.quantity + fill.quantity;
-                let new_avg = if new_qty > Decimal::ZERO {
-                    total_cost / new_qty
+                if position.quantity >= Decimal::ZERO {
+                    // Відкриття/нарощення лонга: комісія входить у середню ціну.
+                    let cost = fill.fill_price * fill.quantity + fill.commission;
+                    let total_cost = position.avg_entry_price * position.quantity + cost;
+                    let new_qty = position.quantity + fill.quantity;
+                    let new_avg = if new_qty > Decimal::ZERO {
+                        total_cost / new_qty
+                    } else {
+                        Decimal::ZERO
+                    };
+                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    position.quantity = new_qty;
+                    position.avg_entry_price = new_avg;
+                    portfolio.cash -= cost;
                 } else {
-                    Decimal::ZERO
-                };
-                let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
-                position.quantity = new_qty;
-                position.avg_entry_price = new_avg;
-                portfolio.cash -= cost;
+                    // Покриття шорта.
+                    anyhow::ensure!(
+                        self.allow_short,
+                        "short position exists in long-only portfolio: {}",
+                        fill.symbol
+                    );
+                    let short_qty = -position.quantity;
+                    anyhow::ensure!(
+                        fill.quantity <= short_qty,
+                        "fill crosses zero (cover {} > short {}): engine must split orders",
+                        fill.quantity,
+                        short_qty
+                    );
+                    let avg_entry = position.avg_entry_price;
+                    let pnl =
+                        (avg_entry - fill.fill_price) * fill.quantity - fill.commission;
+                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    position.realized_pnl += pnl;
+                    position.quantity += fill.quantity;
+                    if position.quantity == Decimal::ZERO {
+                        position.avg_entry_price = Decimal::ZERO;
+                    }
+                    portfolio.cash -= fill.fill_price * fill.quantity + fill.commission;
+                }
             }
             OrderSide::Sell => {
-                let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
-                let sell_qty = fill.quantity.min(position.quantity.max(Decimal::ZERO));
-                if sell_qty <= Decimal::ZERO {
-                    return Ok(());
+                let position = portfolio.positions.get(&fill.symbol).unwrap();
+                if position.quantity > Decimal::ZERO || !self.allow_short {
+                    // Закриття лонга (стара семантика: клемп до наявної кількості).
+                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    let sell_qty = fill.quantity.min(position.quantity.max(Decimal::ZERO));
+                    if sell_qty <= Decimal::ZERO {
+                        return Ok(());
+                    }
+                    anyhow::ensure!(
+                        !self.allow_short || fill.quantity <= position.quantity,
+                        "fill crosses zero (sell {} > long {}): engine must split orders",
+                        fill.quantity,
+                        position.quantity
+                    );
+                    let pnl =
+                        (fill.fill_price - position.avg_entry_price) * sell_qty - fill.commission;
+                    position.realized_pnl += pnl;
+                    position.quantity -= sell_qty;
+                    portfolio.cash += fill.fill_price * sell_qty - fill.commission;
+                } else {
+                    // Відкриття/нарощення шорта: комісія зменшує ефективну ціну входу.
+                    let short_qty = -position.quantity;
+                    let gross_proceeds = fill.fill_price * fill.quantity;
+                    let total_entry = position.avg_entry_price * short_qty + gross_proceeds
+                        - fill.commission;
+                    let new_short_qty = short_qty + fill.quantity;
+                    let new_avg = if new_short_qty > Decimal::ZERO {
+                        total_entry / new_short_qty
+                    } else {
+                        Decimal::ZERO
+                    };
+                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    position.quantity = -new_short_qty;
+                    position.avg_entry_price = new_avg;
+                    portfolio.cash += gross_proceeds - fill.commission;
                 }
-                let pnl = (fill.fill_price - position.avg_entry_price) * sell_qty - fill.commission;
-                position.realized_pnl += pnl;
-                position.quantity -= sell_qty;
-                portfolio.cash += fill.fill_price * sell_qty - fill.commission;
             }
         }
 
@@ -106,5 +175,88 @@ impl PortfolioPort for PortfolioManager {
         p.initial_capital = initial_capital;
         p.last_updated = Utc::now();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use uuid::Uuid;
+
+    fn fill(side: OrderSide, qty: Decimal, price: Decimal, commission: Decimal) -> FillEvent {
+        FillEvent {
+            id: Uuid::new_v4(),
+            order_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            symbol: "T".into(),
+            side,
+            quantity: qty,
+            fill_price: price,
+            commission,
+            slippage: Decimal::ZERO,
+        }
+    }
+
+    #[tokio::test]
+    async fn long_roundtrip_realizes_pnl() {
+        let pm = PortfolioManager::new(dec!(10000));
+        pm.update_on_fill(&fill(OrderSide::Buy, dec!(10), dec!(100), dec!(1)))
+            .await
+            .unwrap();
+        pm.update_on_fill(&fill(OrderSide::Sell, dec!(10), dec!(110), dec!(1)))
+            .await
+            .unwrap();
+        let p = pm.get_portfolio().await.unwrap();
+        // 10000 − 1001 + 1099 = 10098
+        assert_eq!(p.cash, dec!(10098));
+        assert!(p.positions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn short_roundtrip_realizes_pnl() {
+        let pm = PortfolioManager::new_allowing_short(dec!(10000));
+        // Шорт 10 по 100 (комісія 1): кеш +999, позиція −10.
+        pm.update_on_fill(&fill(OrderSide::Sell, dec!(10), dec!(100), dec!(1)))
+            .await
+            .unwrap();
+        let p = pm.get_portfolio().await.unwrap();
+        assert_eq!(p.positions.get("T").unwrap().quantity, dec!(-10));
+        assert_eq!(p.cash, dec!(10999));
+
+        // Покриття по 90 (комісія 1): прибуток ≈ (99.9 − 90)·10 − 1 = 98.
+        pm.update_on_fill(&fill(OrderSide::Buy, dec!(10), dec!(90), dec!(1)))
+            .await
+            .unwrap();
+        let p = pm.get_portfolio().await.unwrap();
+        assert!(p.positions.is_empty());
+        assert_eq!(p.cash, dec!(10098));
+    }
+
+    #[tokio::test]
+    async fn long_only_portfolio_clamps_oversell() {
+        let pm = PortfolioManager::new(dec!(10000));
+        pm.update_on_fill(&fill(OrderSide::Buy, dec!(5), dec!(100), Decimal::ZERO))
+            .await
+            .unwrap();
+        // Продаж 10 при позиції 5 — клемп до 5, шорт не відкривається.
+        pm.update_on_fill(&fill(OrderSide::Sell, dec!(10), dec!(100), Decimal::ZERO))
+            .await
+            .unwrap();
+        let p = pm.get_portfolio().await.unwrap();
+        assert!(p.positions.is_empty());
+        assert_eq!(p.cash, dec!(10000));
+    }
+
+    #[tokio::test]
+    async fn cross_zero_fill_rejected_in_short_mode() {
+        let pm = PortfolioManager::new_allowing_short(dec!(10000));
+        pm.update_on_fill(&fill(OrderSide::Buy, dec!(5), dec!(100), Decimal::ZERO))
+            .await
+            .unwrap();
+        let res = pm
+            .update_on_fill(&fill(OrderSide::Sell, dec!(10), dec!(100), Decimal::ZERO))
+            .await;
+        assert!(res.is_err(), "рух через нуль одним філом заборонений");
     }
 }

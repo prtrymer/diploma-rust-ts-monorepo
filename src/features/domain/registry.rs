@@ -10,6 +10,12 @@ pub struct FeatureRegistry {
     features: HashMap<String, Arc<dyn Feature>>,
 }
 
+impl Default for FeatureRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FeatureRegistry {
     pub fn new() -> Self {
         Self {

@@ -150,6 +150,7 @@ pub async fn stream_signals(
 // ---------------------------------------------------------------------------
 // JWT validation helper
 // ---------------------------------------------------------------------------
+#[allow(clippy::result_large_err)]
 fn authenticate(query: &WsAuthQuery) -> std::result::Result<(), Response> {
     let secret = std::env::var("JWT_SECRET")
         .unwrap_or_else(|_| "super-secret-key-change-me".to_string());
@@ -211,6 +212,7 @@ pub async fn test_signal(
         strength: dec!(0.42),
         strategy_name: "MomentumStrategy".to_string(),
         metadata: Some(r#"{"rsi":62.3,"ema_cross":"bullish"}"#.to_string()),
+        market_context: None,
     };
 
     let json = serde_json::to_string(&signal).unwrap();
@@ -250,7 +252,7 @@ async fn handle_ws(
             recent_signals.read().await;
         // Send from back to front (oldest to newest)
         for signal_json in history.iter().rev() {
-            if sender.send(Message::Text(signal_json.clone().into())).await.is_err() {
+            if sender.send(Message::Text(signal_json.clone())).await.is_err() {
                 return;
             }
         }
@@ -259,7 +261,7 @@ async fn handle_ws(
     // 2. Spawn a task that forwards live broadcast signals → WebSocket text frames.
     let mut send_task = tokio::spawn(async move {
         while let Ok(signal_json) = rx.recv().await {
-            if sender.send(Message::Text(signal_json.into())).await.is_err() {
+            if sender.send(Message::Text(signal_json)).await.is_err() {
                 break;
             }
         }

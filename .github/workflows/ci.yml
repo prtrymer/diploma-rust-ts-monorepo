@@ -1,0 +1,49 @@
+# CI (наскрізна задача роадмапу): на кожен PR — тести + clippy + smoke-бектест
+# на фікстур-датасеті. Регресія детермінізму (M0.5) або витрат (M0.1) валить
+# білд, бо обидві — звичайні cargo-тести.
+
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo test + clippy + smoke backtest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install system deps (rdkafka cmake build)
+        run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev pkg-config
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Юніт- і інтеграційні тести: включають property-тест детермінізму
+      # (tests/determinism_replay.rs, M0.5), тести cost model (M0.1),
+      # метрик (M0.3), purged CV (M1.2), walk-forward (M1.1), PIT (M0.6).
+      - name: cargo test
+        run: cargo test --all-targets
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Smoke-бектест на маленькому фікстур-датасеті (офлайн, детермінований):
+      # повний стек стратегія+бенчмарки+walk-forward має відпрацювати з
+      # ненульовими витратами і пройденими гейт-перевірками звіту.
+      - name: smoke backtest on fixture dataset
+        run: |
+          cargo run --bin quant-backtest -- \
+            --data-dir tests/fixtures/daily --strategy tsmom --walk-forward
+          cargo run --bin quant-backtest -- \
+            --funding-csv tests/fixtures/funding.csv --strategy carry --symbol TESTUSDT
