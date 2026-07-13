@@ -68,6 +68,17 @@ jobs:
             --funding-dir datasets/funding --strategy shadow_carry --top-k 10 \
             | tee research_out/shadow.txt
 
+      # Дозбір funding-історії HTX (інкрементальний; живить жовтневе рішення
+      # по HTX-live). УВАГА: невідомо, чи api.hbdm.com доступний з US-раннерів
+      # (Binance fapi — ні) — continue-on-error, щоб гео-блок не валив research.
+      # Результат дивитись у лозі цього кроку; commit-крок нижче підхоплює
+      # datasets/funding_htx автоматично (git add datasets).
+      - name: Top-up HTX funding history
+        continue-on-error: true
+        run: |
+          cargo build --release --bin htx-exec
+          ./target/release/htx-exec fetch-funding | tail -15
+
       - name: Append RESEARCH_LOG.md
         run: python3 scripts/summarize_run.py research_out RESEARCH_LOG.md
 
