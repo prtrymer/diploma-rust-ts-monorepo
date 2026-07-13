@@ -64,6 +64,7 @@ hexagonal architecture · Kafka-replay (єдиний пайплайн бекте
 | adapter | `CrossSectionalMomentum` (M3.2, dollar-neutral) | `src/trading/adapters/cross_sectional_momentum.rs` |
 | adapter | `FundingCarryBacktest` (M3.1) | `src/trading/adapters/funding_carry.rs` |
 | adapter | Kafka-обгортки портів: `StrategyHandler`, `ExecutionKafkaHandler`, `BrokerKafkaHandler` | `src/trading/adapters/*_handler*.rs` |
+| adapter | **HTX live** — підпис v2 (HMAC-SHA256), REST спот + USDT-M своп, `HtxCarryExecutor` (кошик зі shadow-журналу → дельта-нейтральні ноги: лонг спот + шорт перп). Dry-run за замовчуванням; відправка лише за `HTX_TRADING_ENABLED=true`; ідемпотентність через `live/orders.jsonl` + детерміновані client-order-id | `src/trading/adapters/htx/` |
 
 ### `backtest` — вимірювання
 
@@ -109,6 +110,14 @@ hexagonal architecture · Kafka-replay (єдиний пайплайн бекте
   (`strategy` / `sizing` / `costs` / `ensemble` / `walk_forward`). Дефолти
   визначені тільки тут. `config_hash()` — SHA-256 канонічного JSON.
   `src/shared/run_config.rs`.
+- **`LiveConfig`** — параметри live-виконання на HTX (кошик, капітал, капи,
+  стиль ордерів). Окрема структура зі своїм `config_hash()`, щоб research-хеші
+  в shadow-журналі лишалися стабільними. Секрети (ключі API) — ТІЛЬКИ в env,
+  ніколи в конфізі/хеші. `src/shared/run_config.rs`.
+  `sizing_mode="auto"` — драбина розподілу капіталу (`capital_allocation` в
+  htx/executor.rs): deploy_pct = частка всіх грошей у роботі, K символів
+  виводиться з min_leg_usdt (стеля top_k), нога капиться max_order_usdt;
+  capital_usdt=0 бере капітал з реальних балансів біржі.
 
 ---
 
@@ -137,6 +146,16 @@ property-тестом (M0.5).
 - `quant-backtest` — мультиактивний портфельний бектест з CSV
   (`--data-dir`): стратегія + бенчмарки + walk-forward + deflated Sharpe +
   purged CV; funding carry через `--funding-csv`.
+- `htx-exec` — live-виконання carry-кошика на HTX:
+  `check` (зв'язок/ключі/годинник) · `plan` (dry-run, нічого не шле) ·
+  `positions` · `execute` (потребує `HTX_TRADING_ENABLED=true`) · `config` ·
+  `fetch-funding` (історія funding HTX → `datasets/funding_htx/`, формат
+  `CsvFundingAdapter`, інкрементально).
+  Кошик за замовчуванням — `htx_trailing`: живий селектор за трейлінг-середнім
+  settled funding HTX (той самий скоринг, що в xs_carry-бектесті, який
+  валідував едж на цих даних). Кошики shadow-журналу (`baseline_est`|`rf`,
+  Binance-ранжування) — через `--basket`; вони на HTX переносяться погано.
+  Журнал ордерів і ex-ante вибірок: `live/orders.jsonl`.
 - `latency-bench`, `dataset-sync` — допоміжні.
 
 ## Тести як enforcement

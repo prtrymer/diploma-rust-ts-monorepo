@@ -1,0 +1,15 @@
+{
+  "basket": "htx_trailing",
+  "top_k": 10,
+  "selector_trailing_intervals": 21,
+  "sizing_mode": "auto",
+  "capital_usdt": "120",
+  "deploy_pct": "0.70",
+  "min_htx_funding_per_8h": "0",
+  "max_order_usdt": "100",
+  "max_total_usdt": "200",
+  "order_style": "post_only",
+  "lever_rate": 1,
+  "poll_secs": 45,
+  "min_leg_usdt": "13"
+}

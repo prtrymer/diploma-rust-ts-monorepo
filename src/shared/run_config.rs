@@ -234,6 +234,104 @@ impl RunConfig {
     }
 }
 
+/// Конфігурація live-виконання carry-кошика на HTX (M-live).
+///
+/// Окрема від [`RunConfig`] свідомо: research-хеші в shadow-журналі мають
+/// лишатися стабільними, а live-параметри мають власний провенанс —
+/// `config_hash` цієї структури пишеться в live/runs.jsonl кожного прогону.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LiveConfig {
+    /// Джерело кошика: "htx_trailing" (живий HTX-селектор, дефолт —
+    /// єдиний варіант, чий едж підтверджено на даних самого HTX) або
+    /// кошики shadow-журналу "baseline_est" | "rf" (Binance-ранжування).
+    pub basket: String,
+    /// Розмір кошика для htx_trailing-селектора.
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    /// Вікно трейлінг-середнього funding у 8г-інтервалах (21 = 7 днів —
+    /// як в xs_carry-бектесті, що валідував едж).
+    #[serde(default = "default_trailing")]
+    pub selector_trailing_intervals: usize,
+    /// Розподіл капіталу: "fixed" — нога = capital×deploy/top_k, як задано;
+    /// "auto" — драбина від капіталу: deploy_pct стає часткою ВСІХ грошей
+    /// у роботі (спот-ноги + маржа разом), K символів (≤ top_k) виводиться
+    /// з min_leg_usdt (підлога ноги), нога капиться max_order_usdt;
+    /// capital_usdt = 0 → капітал береться з реальних балансів біржі.
+    #[serde(default = "default_sizing_mode")]
+    pub sizing_mode: String,
+    /// Виділений капітал, USDT.
+    pub capital_usdt: Decimal,
+    /// Частка капіталу в роботі (решта — буфер під маржу і просадки).
+    pub deploy_pct: Decimal,
+    /// Мінімальний ПОТОЧНИЙ funding на самому HTX за 8г. Фільтр переносу
+    /// сигналу: кошик обраний за Binance-даними, а платить нам HTX.
+    /// 0 = вимагаємо хоча б невід'ємний.
+    pub min_htx_funding_per_8h: Decimal,
+    /// Кап нотіоналу однієї ноги одного символа, USDT.
+    pub max_order_usdt: Decimal,
+    /// Кап сумарного нотіоналу відкриттів за один прогін, USDT.
+    pub max_total_usdt: Decimal,
+    /// "post_only" — мейкер (дешевше, але може не виконатись);
+    /// "taker" — ліміт через спред (виконується одразу, дорожче).
+    pub order_style: String,
+    /// Плече перп-ноги. 1 = мінімальний ризик ліквідації шорта при пампі.
+    pub lever_rate: u32,
+    /// Скільки секунд чекати виконання ордерів перед фінальним звітом.
+    pub poll_secs: u64,
+    /// Нога, дрібніша за це (USDT), не виставляється — символ пропускається.
+    pub min_leg_usdt: Decimal,
+}
+
+fn default_top_k() -> usize {
+    10
+}
+fn default_trailing() -> usize {
+    21
+}
+fn default_sizing_mode() -> String {
+    "fixed".to_string()
+}
+
+impl Default for LiveConfig {
+    fn default() -> Self {
+        Self {
+            basket: "htx_trailing".to_string(),
+            top_k: default_top_k(),
+            selector_trailing_intervals: default_trailing(),
+            sizing_mode: default_sizing_mode(),
+            capital_usdt: dec!(1000),
+            deploy_pct: dec!(0.50),
+            min_htx_funding_per_8h: Decimal::ZERO,
+            max_order_usdt: dec!(100),
+            max_total_usdt: dec!(600),
+            order_style: "post_only".to_string(),
+            lever_rate: 1,
+            poll_secs: 45,
+            min_leg_usdt: dec!(10),
+        }
+    }
+}
+
+impl LiveConfig {
+    pub fn canonical_json(&self) -> String {
+        serde_json::to_string(self).expect("LiveConfig serialization is infallible")
+    }
+
+    pub fn config_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.canonical_json().as_bytes());
+        hex::encode(hasher.finalize())
+    }
+
+    pub fn from_json(json: &str) -> anyhow::Result<Self> {
+        Ok(serde_json::from_str(json)?)
+    }
+
+    pub fn to_pretty_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("LiveConfig serialization is infallible")
+    }
+}
+
 fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut Vec<String>) {
     match (a, b) {
         (serde_json::Value::Object(ma), serde_json::Value::Object(mb)) => {
@@ -283,6 +381,23 @@ mod tests {
     fn hash_roundtrip_through_json() {
         let a = RunConfig::default();
         let restored = RunConfig::from_json(&a.canonical_json()).unwrap();
+        assert_eq!(a.config_hash(), restored.config_hash());
+    }
+
+    // Live-конфіг: той самий провенанс-контракт, що й RunConfig.
+    #[test]
+    fn live_config_hash_is_stable_and_sensitive() {
+        let a = LiveConfig::default();
+        let b = LiveConfig::default();
+        assert_eq!(a.config_hash(), b.config_hash());
+
+        let c = LiveConfig {
+            capital_usdt: dec!(2000),
+            ..LiveConfig::default()
+        };
+        assert_ne!(a.config_hash(), c.config_hash());
+
+        let restored = LiveConfig::from_json(&a.canonical_json()).unwrap();
         assert_eq!(a.config_hash(), restored.config_hash());
     }
 
