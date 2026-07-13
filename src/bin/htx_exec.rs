@@ -147,7 +147,7 @@ async fn cmd_check(client: &HtxClient) -> Result<()> {
     println!("\nСпот-акаунт: {account_id}");
     let balances = client.spot_balances(account_id).await?;
     let mut top: Vec<_> = balances.iter().collect();
-    top.sort_by(|a, b| b.1.cmp(a.1));
+    top.sort_by_key(|entry| std::cmp::Reverse(*entry.1));
     for (cur, amt) in top.iter().take(8) {
         println!("  {cur}: {amt}");
     }
@@ -231,7 +231,7 @@ async fn cmd_positions(client: &HtxClient) -> Result<()> {
     let account_id = client.spot_account_id().await?;
     let balances = client.spot_balances(account_id).await?;
     let mut list: Vec<_> = balances.into_iter().collect();
-    list.sort_by(|a, b| b.1.cmp(&a.1));
+    list.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     println!("Спот-баланси (>0):");
     for (cur, amt) in list {
         println!("  {cur}: {amt}");
