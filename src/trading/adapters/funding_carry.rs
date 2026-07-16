@@ -13,7 +13,7 @@
 //!
 //! Kill-критерій: OOS Sharpe < 0.5 після витрат → напрям відкладається.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -179,7 +179,9 @@ impl FundingCarryBacktest {
 
                 // Спот-нога (хедж).
                 if hedged {
-                    let spot_price = point.spot_price.unwrap();
+                    let spot_price = point
+                        .spot_price
+                        .context("hedged-режим, але в точці немає спот-ціни")?;
                     let spot_fills = self
                         .trade_to_target(&symbol, "SPOT", spot_qty, target_spot_qty, spot_price, point)
                         .await?;
@@ -200,7 +202,7 @@ impl FundingCarryBacktest {
         }
 
         // Закриття обох ніг на останній точці.
-        let last = series.last().unwrap();
+        let last = series.last().context("порожня funding-серія")?;
         if perp_qty != Decimal::ZERO {
             let f = self
                 .trade_to_target(&symbol, "PERP", perp_qty, Decimal::ZERO, last.mark_price, last)
@@ -222,7 +224,9 @@ impl FundingCarryBacktest {
             }
             fills.extend(f);
         }
-        *equity_curve.last_mut().unwrap() = cash;
+        if let Some(last_eq) = equity_curve.last_mut() {
+            *last_eq = cash;
+        }
 
         let net_pnl = cash - initial_capital;
         let price_pnl = net_pnl - funding_pnl + total_costs;
@@ -490,7 +494,9 @@ impl FundingCarryBacktest {
                     let idx = cursor[sym.as_str()];
                     let idx = idx.min(series.len().saturating_sub(1));
                     // Точка ціни для торгівлі — остання відома.
-                    let p = last_seen.get(sym).cloned().unwrap();
+                    let Some(p) = last_seen.get(sym).cloned() else {
+                        continue;
+                    };
                     if idx + 1 < cfg.trailing_intervals {
                         continue;
                     }
@@ -677,7 +683,9 @@ impl FundingCarryBacktest {
                 }
             }
         }
-        *equity_curve.last_mut().unwrap() = cash;
+        if let Some(last_eq) = equity_curve.last_mut() {
+            *last_eq = cash;
+        }
 
         let net_pnl = cash - initial_capital;
         let price_pnl = net_pnl - funding_pnl + total_costs;

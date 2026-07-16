@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use rust_decimal::Decimal;
@@ -61,7 +61,10 @@ impl PortfolioPort for PortfolioManager {
 
         match fill.side {
             OrderSide::Buy => {
-                let position = portfolio.positions.get(&fill.symbol).unwrap();
+                let position = portfolio
+                    .positions
+                    .get(&fill.symbol)
+                    .context("position upserted above")?;
                 if position.quantity >= Decimal::ZERO {
                     // Відкриття/нарощення лонга: комісія входить у середню ціну.
                     let cost = fill.fill_price * fill.quantity + fill.commission;
@@ -72,7 +75,10 @@ impl PortfolioPort for PortfolioManager {
                     } else {
                         Decimal::ZERO
                     };
-                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    let position = portfolio
+                        .positions
+                        .get_mut(&fill.symbol)
+                        .context("position upserted above")?;
                     position.quantity = new_qty;
                     position.avg_entry_price = new_avg;
                     portfolio.cash -= cost;
@@ -93,7 +99,10 @@ impl PortfolioPort for PortfolioManager {
                     let avg_entry = position.avg_entry_price;
                     let pnl =
                         (avg_entry - fill.fill_price) * fill.quantity - fill.commission;
-                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    let position = portfolio
+                        .positions
+                        .get_mut(&fill.symbol)
+                        .context("position upserted above")?;
                     position.realized_pnl += pnl;
                     position.quantity += fill.quantity;
                     if position.quantity == Decimal::ZERO {
@@ -103,10 +112,16 @@ impl PortfolioPort for PortfolioManager {
                 }
             }
             OrderSide::Sell => {
-                let position = portfolio.positions.get(&fill.symbol).unwrap();
+                let position = portfolio
+                    .positions
+                    .get(&fill.symbol)
+                    .context("position upserted above")?;
                 if position.quantity > Decimal::ZERO || !self.allow_short {
                     // Закриття лонга (стара семантика: клемп до наявної кількості).
-                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    let position = portfolio
+                        .positions
+                        .get_mut(&fill.symbol)
+                        .context("position upserted above")?;
                     let sell_qty = fill.quantity.min(position.quantity.max(Decimal::ZERO));
                     if sell_qty <= Decimal::ZERO {
                         return Ok(());
@@ -134,7 +149,10 @@ impl PortfolioPort for PortfolioManager {
                     } else {
                         Decimal::ZERO
                     };
-                    let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+                    let position = portfolio
+                        .positions
+                        .get_mut(&fill.symbol)
+                        .context("position upserted above")?;
                     position.quantity = -new_short_qty;
                     position.avg_entry_price = new_avg;
                     portfolio.cash += gross_proceeds - fill.commission;
@@ -142,14 +160,18 @@ impl PortfolioPort for PortfolioManager {
             }
         }
 
-        let position = portfolio.positions.get_mut(&fill.symbol).unwrap();
+        let position = portfolio
+            .positions
+            .get_mut(&fill.symbol)
+            .context("position upserted above")?;
         position.current_price = fill.fill_price;
         position.unrealized_pnl =
             (position.current_price - position.avg_entry_price) * position.quantity;
         position.last_updated = Utc::now();
+        let flat = position.quantity == Decimal::ZERO;
         portfolio.last_updated = Utc::now();
 
-        if portfolio.positions.get(&fill.symbol).unwrap().quantity == Decimal::ZERO {
+        if flat {
             portfolio.positions.remove(&fill.symbol);
         }
 

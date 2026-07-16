@@ -207,8 +207,8 @@ impl<'a> FundingHistoryCollector<'a> {
                 no_price: 0,
             });
         }
-        let from_sec = funding.first().unwrap().0 / 1000 - FOUR_H_SEC;
-        let to_sec = funding.last().unwrap().0 / 1000 + FOUR_H_SEC;
+        let from_sec = funding.first().context("funding спорожнів після guard")?.0 / 1000 - FOUR_H_SEC;
+        let to_sec = funding.last().context("funding спорожнів після guard")?.0 / 1000 + FOUR_H_SEC;
         self.pause().await;
         let bars = self.prices_4h(contract_code, from_sec, to_sec).await?;
 

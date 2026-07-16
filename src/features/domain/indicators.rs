@@ -326,7 +326,10 @@ impl Feature for MeanReversionFeature {
         if std_dev <= Decimal::ZERO {
             return Ok(FeatureValue::Scalar(Decimal::ZERO));
         }
-        let z = (slice.last().unwrap().close - mean) / std_dev;
+        let Some(last) = slice.last() else {
+            return Ok(FeatureValue::Missing);
+        };
+        let z = (last.close - mean) / std_dev;
         Ok(FeatureValue::Scalar(z))
     }
 }
@@ -484,7 +487,9 @@ impl Feature for LiquidityImbalanceProxyFeature {
         let slice = &data[data.len() - self.period..];
         let avg_volume = Decimal::from(slice.iter().map(|c| c.volume).sum::<i64>())
             / Decimal::from(self.period as u64);
-        let last = slice.last().unwrap();
+        let Some(last) = slice.last() else {
+            return Ok(FeatureValue::Missing);
+        };
         if avg_volume <= Decimal::ZERO {
             return Ok(FeatureValue::Missing);
         }
@@ -518,7 +523,9 @@ impl Feature for OrderFlowProxyFeature {
         if data.len() < self.volume_period {
             return Ok(FeatureValue::Missing);
         }
-        let last = data.last().unwrap();
+        let Some(last) = data.last() else {
+            return Ok(FeatureValue::Missing);
+        };
         if last.open == Decimal::ZERO {
             return Ok(FeatureValue::Missing);
         }
