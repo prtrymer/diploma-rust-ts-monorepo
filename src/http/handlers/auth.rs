@@ -134,13 +134,10 @@ pub async fn login(
         exp: expiration,
     };
 
-    let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "super-secret-key-change-me".to_string());
-
     let token = encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
+        &EncodingKey::from_secret(crate::http::jwt::secret()),
     )
     .map_err(|e| {
         (

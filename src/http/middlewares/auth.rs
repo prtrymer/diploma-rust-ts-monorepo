@@ -51,11 +51,9 @@ where
             }
         };
 
-        let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "super-secret-key-change-me".to_string());
-
         let token_data = decode::<Claims>(
             &token,
-            &DecodingKey::from_secret(secret.as_bytes()),
+            &DecodingKey::from_secret(crate::http::jwt::secret()),
             &Validation::default(),
         )
         .map_err(|e| AuthError(StatusCode::UNAUTHORIZED, format!("Invalid token: {}", e)))?;

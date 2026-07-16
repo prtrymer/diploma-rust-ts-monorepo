@@ -22,6 +22,8 @@ pub async fn run() -> Result<()> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    // Fail-fast: без JWT_SECRET сервер не піднімаємо — фолбек-ключ це діра.
+    crate::http::jwt::init_from_env()?;
     tracing::info!("starting market data & trading engine");
 
     // 1. Initialize databases

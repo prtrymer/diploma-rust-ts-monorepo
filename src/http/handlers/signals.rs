@@ -154,27 +154,28 @@ pub async fn stream_signals(
 // ---------------------------------------------------------------------------
 #[allow(clippy::result_large_err)]
 fn authenticate(query: &WsAuthQuery) -> std::result::Result<(), Response> {
-    let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "super-secret-key-change-me".to_string());
+    let unauthorized = |msg: &str| {
+        axum::response::Response::builder()
+            .status(axum::http::StatusCode::UNAUTHORIZED)
+            .body(axum::body::Body::from(msg.to_string()))
+            .expect("static 401 response")
+            .into_response()
+    };
 
-    if let Some(ref token) = query.token {
-        let validation = jsonwebtoken::Validation::default();
-        if jsonwebtoken::decode::<crate::http::middlewares::auth::Claims>(
-            token,
-            &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
-            &validation,
-        )
-        .is_err()
-        {
-            return Err(axum::response::Response::builder()
-                .status(axum::http::StatusCode::UNAUTHORIZED)
-                .body(axum::body::Body::from("Invalid token"))
-                .unwrap()
-                .into_response());
-        }
+    let Some(ref token) = query.token else {
+        return Err(unauthorized("Missing token"));
+    };
+
+    let validation = jsonwebtoken::Validation::default();
+    if jsonwebtoken::decode::<crate::http::middlewares::auth::Claims>(
+        token,
+        &jsonwebtoken::DecodingKey::from_secret(crate::http::jwt::secret()),
+        &validation,
+    )
+    .is_err()
+    {
+        return Err(unauthorized("Invalid token"));
     }
-    // NOTE: if you want to *require* auth, return Err(401) when token is None.
-    // Currently kept permissive for development convenience.
     Ok(())
 }
 
@@ -196,6 +197,7 @@ fn authenticate(query: &WsAuthQuery) -> std::result::Result<(), Response> {
     )
 )]
 pub async fn test_signal(
+    _claims: crate::http::middlewares::auth::Claims,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     use crate::trading::domain::events::{SignalDirection, SignalEvent};
