@@ -15,7 +15,14 @@ use chrono::Utc;
 
 pub async fn run() -> Result<()> {
     dotenv::dotenv().ok();
-    println!("Starting Market Data & Trading Engine");
+    // Рівні керуються RUST_LOG (default: info), напр. RUST_LOG=db_con=debug.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+    tracing::info!("starting market data & trading engine");
 
     // 1. Initialize databases
     let (user_repo, repository, symbols, symbols_vec) = database::init_database().await?;
@@ -55,51 +62,51 @@ pub async fn run() -> Result<()> {
     let ingestion_clone = ingestion_service.clone();
     let interval_secs = if is_simulated { 10 } else { 60 };
     tokio::spawn(async move {
-        println!("Starting data ingestion service (interval: {}s)...", interval_secs);
+        tracing::info!(interval_secs, "starting data ingestion service");
         if let Err(e) = ingestion_clone.start_streaming(interval_secs).await {
-            eprintln!("Data ingestion error: {}", e);
+            tracing::error!(error = %e, "data ingestion failed");
         }
     });
 
     let svc = Arc::new(wiring.svc_market);
     tokio::spawn(async move {
         if let Err(e) = svc.start_consuming().await {
-            eprintln!("Market data handler error: {}", e);
+            tracing::error!(error = %e, consumer = "market_data", "consumer terminated");
         }
     });
 
     let svc = Arc::new(wiring.svc_strategy);
     tokio::spawn(async move {
         if let Err(e) = svc.start_consuming().await {
-            eprintln!("Strategy handler error: {}", e);
+            tracing::error!(error = %e, consumer = "strategy", "consumer terminated");
         }
     });
 
     let svc = Arc::new(wiring.svc_execution);
     tokio::spawn(async move {
         if let Err(e) = svc.start_consuming().await {
-            eprintln!("Execution handler error: {}", e);
+            tracing::error!(error = %e, consumer = "execution", "consumer terminated");
         }
     });
 
     let svc = Arc::new(wiring.svc_broker);
     tokio::spawn(async move {
         if let Err(e) = svc.start_consuming().await {
-            eprintln!("Broker handler error: {}", e);
+            tracing::error!(error = %e, consumer = "broker", "consumer terminated");
         }
     });
 
     let svc = Arc::new(wiring.svc_portfolio);
     tokio::spawn(async move {
         if let Err(e) = svc.start_consuming().await {
-            eprintln!("Portfolio handler error: {}", e);
+            tracing::error!(error = %e, consumer = "portfolio", "consumer terminated");
         }
     });
 
     let svc = Arc::new(wiring.svc_http_signals);
     tokio::spawn(async move {
         if let Err(e) = svc.start_consuming().await {
-            eprintln!("HTTP signals handler error: {}", e);
+            tracing::error!(error = %e, consumer = "http_signals", "consumer terminated");
         }
     });
 
@@ -109,18 +116,18 @@ pub async fn run() -> Result<()> {
     let data_source_warmup = data_source.clone();
     let user_repo_warmup = user_repo.clone();
     tokio::spawn(async move {
-        println!("⏳ Waiting 3 seconds for Kafka consumers to settle before starting startup warmup...");
+        tracing::info!("waiting 3s for kafka consumers to settle before startup warmup");
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
         // Re-fetch fresh from postgres to catch ALL portfolio symbols (not just the boot snapshot)
         let all_symbols = match user_repo_warmup.get_active_symbols().await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("❌ Failed to load portfolio symbols for warmup: {}", e);
+                tracing::error!(error = %e, "failed to load portfolio symbols for warmup");
                 return;
             }
         };
-        println!("🚀 Starting startup warmup for all portfolio symbols: {:?}", all_symbols);
+        tracing::info!(symbols = ?all_symbols, "starting startup warmup");
 
         for symbol in all_symbols {
             let symbol_clone = symbol.clone();
@@ -135,7 +142,7 @@ pub async fn run() -> Result<()> {
                 match data_source_inner.fetch_historical_quotes(&symbol_clone, start, end, "1m").await {
                     Ok(quotes) => {
                         let recent: Vec<_> = quotes.into_iter().rev().take(1000).collect::<Vec<_>>().into_iter().rev().collect();
-                        println!("Fetched {} historical 1m candles for {} startup warmup", recent.len(), symbol_clone);
+                        tracing::info!(symbol = %symbol_clone, candles = recent.len(), "fetched historical 1m candles for startup warmup");
 
                         let mut last_price: Option<Decimal> = None;
 
@@ -183,9 +190,9 @@ pub async fn run() -> Result<()> {
                             }
                         }
 
-                        println!("✅ Warmup complete for {} — signal timestamps anchored to now", symbol_clone);
+                        tracing::info!(symbol = %symbol_clone, "warmup complete — signal timestamps anchored to now");
                     }
-                    Err(e) => eprintln!("❌ Failed to fetch startup warmup data for {}: {}", symbol_clone, e),
+                    Err(e) => tracing::error!(symbol = %symbol_clone, error = %e, "failed to fetch startup warmup data"),
                 }
             });
         }

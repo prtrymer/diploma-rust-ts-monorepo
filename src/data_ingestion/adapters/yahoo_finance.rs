@@ -425,12 +425,11 @@ impl YahooFinanceAdapter {
             let mut chunk = if let Some(c) = chunk_opt {
                 c
             } else {
-                eprintln!(
-                    "Yahoo HTTP chunk skipped for {} [{}..{}], failures: {}",
-                    symbol,
-                    cursor_start,
-                    cursor_end,
-                    fail_chain.join(" | ")
+                tracing::warn!(
+                    %symbol,
+                    range = %format!("{}..{}", cursor_start, cursor_end),
+                    failures = %fail_chain.join(" | "),
+                    "yahoo HTTP chunk skipped"
                 );
                 cursor_start = cursor_end;
                 continue;

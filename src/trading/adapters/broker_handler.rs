@@ -50,9 +50,11 @@ impl MessageHandler for BrokerKafkaHandler {
                 value: json,
             })
             .await?;
-        println!(
-            "Published fill for {}: {} @ {}",
-            fill.symbol, fill.quantity, fill.fill_price
+        tracing::info!(
+            symbol = %fill.symbol,
+            quantity = %fill.quantity,
+            price = %fill.fill_price,
+            "published fill"
         );
 
         Ok(())

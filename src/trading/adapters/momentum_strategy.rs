@@ -123,9 +123,12 @@ impl StrategyPort for MomentumStrategy {
             return Ok(None);
         }
 
-        println!(
-            "📈 {} — {:?} confidence={:.4} (min={:.4})",
-            tick.symbol, prediction.direction, prediction.confidence, self.min_confidence
+        tracing::debug!(
+            symbol = %tick.symbol,
+            direction = ?prediction.direction,
+            confidence = %prediction.confidence,
+            min_confidence = %self.min_confidence,
+            "prediction"
         );
 
         if prediction.confidence < self.min_confidence {

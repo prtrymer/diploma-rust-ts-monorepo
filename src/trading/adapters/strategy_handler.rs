@@ -56,22 +56,18 @@ impl MessageHandler for StrategyHandler {
                     value: json,
                 })
                 .await?;
-            println!(
-                "🚀 Published signal for {}: {:?} (strength={:.4})",
-                signal.symbol, signal.direction, signal.strength
+            tracing::info!(
+                symbol = %signal.symbol,
+                direction = ?signal.direction,
+                strength = %signal.strength,
+                "published signal"
             );
         } else {
             let strategy = self.strategy.read().await;
             if strategy.is_warmed_up(&tick.symbol).await {
-                println!(
-                    "🔍 {} — analyzing tick (no signal generated)",
-                    tick.symbol
-                );
+                tracing::debug!(symbol = %tick.symbol, "analyzing tick (no signal generated)");
             } else {
-                println!(
-                    "📊 {} — buffering tick (waiting for lookback to fill)",
-                    tick.symbol
-                );
+                tracing::debug!(symbol = %tick.symbol, "buffering tick (waiting for lookback to fill)");
             }
         }
 

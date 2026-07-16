@@ -112,8 +112,10 @@ pub async fn stream_signals(
         return resp;
     }
 
-    println!("📡 New signal stream request: mode={}", 
-        if ws.is_some() { "WebSocket" } else { "SSE" });
+    tracing::info!(
+        mode = if ws.is_some() { "websocket" } else { "sse" },
+        "new signal stream request"
+    );
 
     match ws {
         // ---- WebSocket path ----
@@ -244,7 +246,7 @@ async fn handle_ws(
     recent_signals: Arc<RwLock<std::collections::VecDeque<String>>>,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    println!("🔌 WebSocket connection established (replaying history...)");
+    tracing::info!("websocket connection established, replaying history");
 
     // 1. Replay recent signals
     {
@@ -265,7 +267,7 @@ async fn handle_ws(
                 break;
             }
         }
-        println!("🔌 WebSocket send task terminated");
+        tracing::debug!("websocket send task terminated");
     });
 
     // Spawn a task that reads client messages (pings / close).
@@ -273,7 +275,7 @@ async fn handle_ws(
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 Message::Close(_) => {
-                    println!("🔌 WebSocket closed by client");
+                    tracing::debug!("websocket closed by client");
                     break;
                 }
                 Message::Ping(payload) => {
@@ -282,7 +284,7 @@ async fn handle_ws(
                 _ => {} // Ignore other client messages.
             }
         }
-        println!("🔌 WebSocket receive task terminated");
+        tracing::debug!("websocket receive task terminated");
     });
 
     // When either task finishes, abort the other.

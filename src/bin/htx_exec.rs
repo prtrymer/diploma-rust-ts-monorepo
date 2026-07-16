@@ -324,6 +324,15 @@ async fn cmd_fetch_funding(client: &HtxClient, args: &Args) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
+    // Логи бібліотечного коду → stderr (default: warn, керується RUST_LOG),
+    // щоб stdout лишався чистим звітом CLI.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
     let args = parse_args()?;
     let client = HtxClient::from_env()?;
 

@@ -43,7 +43,7 @@ impl DataIngestionService {
     pub async fn start_streaming(&self, interval_secs: u64) -> Result<()> {
         let mut ticker = interval(Duration::from_secs(interval_secs));
 
-        println!("📈 Starting data ingestion service...");
+        tracing::info!("starting data ingestion service");
 
         loop {
             ticker.tick().await;
@@ -69,9 +69,9 @@ impl DataIngestionService {
                 };
                 
                 match svc.fetch_and_send(&symbol).await {
-                    Ok(true) => println!("✓ Sent quote for {}", symbol),
-                    Ok(false) => println!("↷ Skipped duplicate quote for {}", symbol),
-                    Err(e) => eprintln!("❌ Error processing {}: {}", symbol, e),
+                    Ok(true) => tracing::debug!(%symbol, "sent quote"),
+                    Ok(false) => tracing::debug!(%symbol, "skipped duplicate quote"),
+                    Err(e) => tracing::error!(%symbol, error = %e, "quote processing failed"),
                 }
                 
                 // Add a small delay between symbol fetches to avoid triggering Yahoo Finance rate limits

@@ -98,9 +98,11 @@ impl ScyllaHistoricalLoader {
                         }
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Backtest sync chunk failed for {} [{}..{}]: {}",
-                            symbol, cursor_start, cursor_end, e
+                        tracing::warn!(
+                            %symbol,
+                            range = %format!("{}..{}", cursor_start, cursor_end),
+                            error = %e,
+                            "backtest sync chunk failed"
                         );
                     }
                 }
@@ -129,9 +131,11 @@ impl HistoricalDataLoader for ScyllaHistoricalLoader {
     ) -> Result<usize> {
         let candles = self.load_candles(symbol, start, end).await?;
         if candles.is_empty() {
-            println!(
-                "No historical candles available for {} in {}..{} (fetch_missing={})",
-                symbol, start, end, self.fetch_missing
+            tracing::warn!(
+                %symbol,
+                range = %format!("{}..{}", start, end),
+                fetch_missing = self.fetch_missing,
+                "no historical candles available"
             );
             return Ok(0);
         }
@@ -163,10 +167,7 @@ impl HistoricalDataLoader for ScyllaHistoricalLoader {
             count += 1;
         }
 
-        println!(
-            "Replayed {} historical candles as ticks for {}",
-            count, symbol
-        );
+        tracing::info!(%symbol, candles = count, "replayed historical candles as ticks");
         Ok(count)
     }
 }

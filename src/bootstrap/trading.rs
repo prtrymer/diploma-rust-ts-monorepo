@@ -35,10 +35,10 @@ pub async fn init_trading_engine(
         .ok()
         .and_then(|s| s.parse::<Decimal>().ok())
         .unwrap_or(run_config.strategy.min_confidence);
-    println!(
-        "Initializing MomentumStrategy with min_confidence: {} (config hash {})",
-        min_confidence,
-        run_config.config_hash()
+    tracing::info!(
+        %min_confidence,
+        config_hash = %run_config.config_hash(),
+        "initializing MomentumStrategy"
     );
 
     let strategy = Arc::new(RwLock::new(MomentumStrategy::new(
@@ -50,21 +50,21 @@ pub async fn init_trading_engine(
     ))) as Arc<RwLock<dyn StrategyPort>>;
 
     // Warmup
-    println!("Warming up strategy with historical data (lookback_size={})...", lookback_size);
+    tracing::info!(lookback_size, "warming up strategy with historical data");
     for symbol in symbols_vec {
         match repository.get_latest_candles(symbol, "1min", lookback_size).await {
             Ok(candles) => {
                 if !candles.is_empty() {
-                    println!("  Warming up {} with {} candles from ScyllaDB", symbol, candles.len());
+                    tracing::info!(%symbol, candles = candles.len(), "warming up from ScyllaDB");
                     let mut strat = strategy.write().await;
                     if let Err(e) = strat.warmup(candles).await {
-                        eprintln!("  Failed to warm up {}: {}", symbol, e);
+                        tracing::error!(%symbol, error = %e, "strategy warmup failed");
                     }
                 } else {
-                    println!("  No historical candles found for {} in ScyllaDB. Skipping direct API fetch (will be processed via Kafka startup warmup).", symbol);
+                    tracing::info!(%symbol, "no historical candles in ScyllaDB — will warm up via Kafka startup warmup");
                 }
             }
-            Err(e) => eprintln!("  Error fetching candles for {}: {}", symbol, e),
+            Err(e) => tracing::error!(%symbol, error = %e, "fetching candles for warmup failed"),
         }
     }
 

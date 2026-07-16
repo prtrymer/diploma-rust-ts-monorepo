@@ -12,16 +12,16 @@ pub async fn init_database() -> Result<(
     Arc<RwLock<Vec<String>>>,
     Vec<String>,
 )> {
-    println!("Connecting to PostgreSQL...");
+    tracing::info!("connecting to PostgreSQL");
     let user_repo = Arc::new(PostgresRepository::new(&database_url()).await?) as Arc<dyn UserRepository>;
 
-    println!("Connecting to ScyllaDB...");
+    tracing::info!("connecting to ScyllaDB");
     let repository = Arc::new(ScyllaRepository::new(scylla_nodes(), "market_data").await?)
         as Arc<dyn Repository>;
 
     let mut db_symbols = user_repo.get_active_symbols().await?;
     if db_symbols.is_empty() {
-        println!("No active symbols found in database, inserting defaults...");
+        tracing::info!("no active symbols in database, inserting defaults");
         let defaults = vec!["AAPL".to_string(), "GOOGL".to_string(), "MSFT".to_string()];
         for sym in &defaults {
             user_repo.add_active_symbol(sym).await?;

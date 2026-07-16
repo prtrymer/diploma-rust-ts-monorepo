@@ -42,9 +42,11 @@ impl BacktestEngine {
     }
 
     pub async fn run(&self) -> Result<BacktestReport> {
-        println!(
-            "Starting backtest for {} from {} to {}",
-            self.config.symbol, self.config.start, self.config.end
+        tracing::info!(
+            symbol = %self.config.symbol,
+            start = %self.config.start,
+            end = %self.config.end,
+            "starting backtest"
         );
 
         let count = self
@@ -56,7 +58,7 @@ impl BacktestEngine {
                 &self.config.topic,
             )
             .await?;
-        println!("Replayed {} historical events", count);
+        tracing::info!(events = count, "replayed historical events");
 
         // Wait for the Kafka pipeline to process all events
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -70,10 +72,7 @@ impl BacktestEngine {
             self.config.initial_capital,
         );
 
-        println!(
-            "Backtest complete. Final value: {}",
-            report.final_portfolio_value
-        );
+        tracing::info!(final_value = %report.final_portfolio_value, "backtest complete");
         Ok(report)
     }
 }

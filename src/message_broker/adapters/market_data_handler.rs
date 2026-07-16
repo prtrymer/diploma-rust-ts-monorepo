@@ -38,16 +38,10 @@ impl MessageHandler for MarketDataHandler {
             .context("Failed to insert stock tick")?;
 
         if let Err(e) = self.aggregator.process_tick(&tick).await {
-            eprintln!(
-                "Warning: candle aggregation failed for {}: {}",
-                tick.symbol, e
-            );
+            tracing::warn!(symbol = %tick.symbol, error = %e, "candle aggregation failed");
         }
 
-        println!(
-            "Saved tick for symbol: {} price={} volume={}",
-            tick.symbol, tick.price, tick.volume
-        );
+        tracing::debug!(symbol = %tick.symbol, price = %tick.price, volume = tick.volume, "saved tick");
         Ok(())
     }
 }

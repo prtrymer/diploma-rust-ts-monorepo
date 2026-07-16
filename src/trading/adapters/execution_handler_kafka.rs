@@ -50,9 +50,11 @@ impl MessageHandler for ExecutionKafkaHandler {
                     value: json,
                 })
                 .await?;
-            println!(
-                "Published order for {}: {:?} qty={}",
-                order.symbol, order.side, order.quantity
+            tracing::info!(
+                symbol = %order.symbol,
+                side = ?order.side,
+                quantity = %order.quantity,
+                "published order"
             );
         }
 

@@ -33,11 +33,11 @@ impl Consumer for KafkaConsumerAdapter {
                 let payload = match message.payload_view::<str>() {
                     Some(Ok(s)) => s.to_string(),
                     Some(Err(e)) => {
-                        eprintln!("Error deserializing message payload: {:?}", e);
+                        tracing::error!(error = ?e, "failed to deserialize message payload");
                         return Ok(None);
                     }
                     None => {
-                        eprintln!("Empty message payload");
+                        tracing::warn!("empty message payload");
                         return Ok(None);
                     }
                 };
@@ -55,7 +55,7 @@ impl Consumer for KafkaConsumerAdapter {
                 }))
             }
             Err(e) => {
-                eprintln!("Kafka error: {}", e);
+                tracing::error!(error = %e, "kafka consume error");
                 Ok(None)
             }
         }

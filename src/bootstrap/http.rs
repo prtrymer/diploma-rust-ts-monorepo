@@ -16,8 +16,7 @@ pub async fn start_http_server(
     signals_tx: broadcast::Sender<String>,
     recent_signals: Arc<RwLock<VecDeque<String>>>,
 ) -> Result<()> {
-    println!("Starting HTTP API server on http://localhost:3000");
-    println!("Swagger UI: http://localhost:3000/swagger-ui/");
+    tracing::info!("starting HTTP API server on http://localhost:3000 (Swagger UI: /swagger-ui/)");
     let app_state = AppState {
         symbols,
         repository,
@@ -29,14 +28,8 @@ pub async fn start_http_server(
     let app = create_router(app_state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
 
-    println!("Application is running. Press Ctrl+C to stop.");
-    println!("API Endpoints:");
-    println!("   GET    http://localhost:3000/http/symbols");
-    println!("   POST   http://localhost:3000/http/symbols");
-    println!("   DELETE http://localhost:3000/http/symbols");
-    println!();
-    println!("Trading Pipeline:");
-    println!("   market-data-raw -> Strategy -> trading-signals -> Execution -> trading-orders -> Broker -> trading-fills -> Portfolio");
+    tracing::info!("application is running (Ctrl+C to stop)");
+    tracing::info!("pipeline: market-data-raw -> Strategy -> trading-signals -> Execution -> trading-orders -> Broker -> trading-fills -> Portfolio");
 
     axum::serve(listener, app).await?;
     Ok(())

@@ -60,10 +60,7 @@ impl CandleAggregator {
             if let Some(window) = windows.remove(&ready_key) {
                 let candle = self.window_to_candle(&window, Timeframe::OneMin);
                 self.repository.insert_candle_1min(&candle).await?;
-                println!(
-                    "✅ Saved 1min candle for {} at {}",
-                    candle.symbol, candle.timestamp
-                );
+                tracing::debug!(symbol = %candle.symbol, timestamp = %candle.timestamp, "saved 1min candle");
             }
         }
 
@@ -98,10 +95,7 @@ impl CandleAggregator {
             if let Some(window) = windows.remove(&ready_key) {
                 let candle = self.window_to_candle(&window, Timeframe::FiveMin);
                 self.repository.insert_candle_5min(&candle).await?;
-                println!(
-                    "✅ Saved 5min candle for {} at {}",
-                    candle.symbol, candle.timestamp
-                );
+                tracing::debug!(symbol = %candle.symbol, timestamp = %candle.timestamp, "saved 5min candle");
             }
         }
 

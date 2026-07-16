@@ -31,9 +31,11 @@ impl MessageHandler for FillKafkaHandler {
             serde_json::from_str(&message.payload).context("Failed to parse FillEvent")?;
 
         self.portfolio.update_on_fill(&fill).await?;
-        println!(
-            "Portfolio updated after fill: {} {} @ {}",
-            fill.symbol, fill.quantity, fill.fill_price
+        tracing::info!(
+            symbol = %fill.symbol,
+            quantity = %fill.quantity,
+            price = %fill.fill_price,
+            "portfolio updated after fill"
         );
 
         Ok(())

@@ -80,7 +80,7 @@ pub async fn add_symbol(
     let symbol_clone = symbol.clone();
     
     tokio::spawn(async move {
-        println!("🚀 Starting fast warmup for newly added symbol: {}", symbol_clone);
+        tracing::info!(symbol = %symbol_clone, "starting fast warmup for newly added symbol");
         let data_source = YahooFinanceAdapter::new();
         let end = Utc::now();
         // 120 hours = 5 days to ensure enough trading minutes across weekends
@@ -89,7 +89,7 @@ pub async fn add_symbol(
         match data_source.fetch_historical_quotes(&symbol_clone, start, end, "1m").await {
             Ok(quotes) => {
                 let recent: Vec<_> = quotes.into_iter().rev().take(1000).collect::<Vec<_>>().into_iter().rev().collect();
-                println!("Fetched {} historical 1m candles for {} warmup", recent.len(), symbol_clone);
+                tracing::info!(symbol = %symbol_clone, candles = recent.len(), "fetched historical 1m candles for warmup");
 
                 let mut last_price: Option<Decimal> = None;
 
@@ -137,9 +137,9 @@ pub async fn add_symbol(
                     }
                 }
 
-                println!("✅ Warmup complete for {} — signal timestamps anchored to now", symbol_clone);
+                tracing::info!(symbol = %symbol_clone, "warmup complete — signal timestamps anchored to now");
             }
-            Err(e) => eprintln!("❌ Failed to fetch warmup data for {}: {}", symbol_clone, e),
+            Err(e) => tracing::error!(symbol = %symbol_clone, error = %e, "failed to fetch warmup data"),
         }
     });
 
