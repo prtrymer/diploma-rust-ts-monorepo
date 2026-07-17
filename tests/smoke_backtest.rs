@@ -5,7 +5,8 @@
 //!   - витрати перестали вираховуватись (інваріант 2, M0.1);
 //!   - бенчмарки зникли зі звіту (M0.2);
 //!   - walk-forward вікна зламались (M1.1);
-//!   - двигун перестав бути детермінованим (інваріант 4).
+//!   - двигун перестав бути детермінованим (інваріант 4);
+//!   - движок перестав відтворювати тренд на синтетиці (GATE M2.1).
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use rust_decimal::Decimal;
@@ -140,6 +141,31 @@ async fn smoke_walk_forward_is_deterministic() {
         serde_json::to_string(&a).unwrap(),
         serde_json::to_string(&b).unwrap(),
         "walk-forward має бути побайтово відтворюваним"
+    );
+}
+
+// CI-регресія GATE M2.1: на синтетиці з вбудованими трендами TSMOM мусить давати
+// додатний OOS Sharpe (фактично ~3.9 при порозі гейта 0.4 — десятикратний запас).
+// Рядок «GATE M2.1 ✓» у виводі бінарника — інформаційний println без впливу на
+// exit code, тож запобіжником від «движок перестав бачити тренд» є саме цей assert.
+#[tokio::test]
+async fn smoke_tsmom_gate_holds_on_fixture() {
+    let data = fixture_data();
+    let portfolio: Arc<dyn PortfolioPort> =
+        Arc::new(PortfolioManager::new_allowing_short(dec!(100000)));
+    let wf = WalkForwardRunner::new(data.clone(), broker(), portfolio, dec!(100000));
+    let factory = || Box::new(tsmom()) as Box<dyn AllocationStrategy>;
+    let summary = wf
+        .run(&factory, &RunConfig::default().walk_forward, 1)
+        .await
+        .expect("wf run");
+    let med = summary
+        .median_oos_sharpe
+        .expect("walk-forward на фікстурі має дати OOS-фолди з Sharpe");
+    assert!(
+        med >= dec!(0.4),
+        "GATE M2.1 на фікстурі: median OOS Sharpe {med} < 0.4 — \
+         движок перестав відтворювати тренд, шукай баг у движку"
     );
 }
 

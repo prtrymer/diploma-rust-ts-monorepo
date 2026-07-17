@@ -1,6 +1,6 @@
-# CI (наскрізна задача роадмапу): на кожен PR — тести + clippy + smoke-бектест
-# на фікстур-датасеті. Регресія детермінізму (M0.5) або витрат (M0.1) валить
-# білд, бо обидві — звичайні cargo-тести.
+# CI (наскрізна задача роадмапу): на кожен PR і пуш у master — тести + clippy
+# + smoke-бектест на фікстур-датасеті. Регресія детермінізму (M0.5), витрат
+# (M0.1) чи гейта M2.1 на синтетиці валить білд, бо всі вони — cargo-тести.
 
 name: CI
 
@@ -31,7 +31,8 @@ jobs:
 
       # Юніт- і інтеграційні тести: включають property-тест детермінізму
       # (tests/determinism_replay.rs, M0.5), тести cost model (M0.1),
-      # метрик (M0.3), purged CV (M1.2), walk-forward (M1.1), PIT (M0.6).
+      # метрик (M0.3), purged CV (M1.2), walk-forward (M1.1), PIT (M0.6)
+      # і гейт-регресію M2.1 на фікстурі (tests/smoke_backtest.rs).
       - name: cargo test
         run: cargo test --all-targets
 
@@ -39,8 +40,9 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       # Smoke-бектест на маленькому фікстур-датасеті (офлайн, детермінований):
-      # повний стек стратегія+бенчмарки+walk-forward має відпрацювати з
-      # ненульовими витратами і пройденими гейт-перевірками звіту.
+      # перевіряє лише, що повний CLI-шлях (tsmom+walk-forward, carry) відпрацьовує
+      # без падіння. Рядки GATE/KILL у виводі — інформаційні, exit code не змінюють;
+      # сам гейт M2.1 enforced тестом smoke_tsmom_gate_holds_on_fixture.
       - name: smoke backtest on fixture dataset
         run: |
           cargo run --bin quant-backtest -- \
