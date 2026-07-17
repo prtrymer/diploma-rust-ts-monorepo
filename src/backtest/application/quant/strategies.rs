@@ -3,9 +3,9 @@
 use rust_decimal_macros::dec;
 
 use super::QuantArgs;
-use crate::trading::adapters::benchmark_strategies::{BuyAndHold, EqualWeight, SixtyForty};
-use crate::trading::adapters::cross_sectional_momentum::CrossSectionalMomentum;
-use crate::trading::adapters::tsmom_strategy::TsmomStrategy;
+use crate::trading::domain::strategies::benchmark_strategies::{BuyAndHold, EqualWeight, SixtyForty};
+use crate::trading::domain::strategies::cross_sectional_momentum::CrossSectionalMomentum;
+use crate::trading::domain::strategies::tsmom_strategy::TsmomStrategy;
 use crate::trading::domain::allocation::AllocationStrategy;
 
 pub fn build_strategy(args: &QuantArgs, universe: Vec<String>) -> (Box<dyn AllocationStrategy>, bool) {

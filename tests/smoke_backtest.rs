@@ -20,7 +20,7 @@ use db_con::backtest::application::walk_forward::WalkForwardRunner;
 use db_con::shared::run_config::RunConfig;
 use db_con::trading::adapters::broker_simulator::SimpleBrokerSimulator;
 use db_con::trading::adapters::portfolio_manager::PortfolioManager;
-use db_con::trading::adapters::tsmom_strategy::TsmomStrategy;
+use db_con::trading::domain::strategies::tsmom_strategy::TsmomStrategy;
 use db_con::trading::domain::allocation::{AllocationStrategy, AlignedMarketData};
 use db_con::trading::domain::costs::cost_model_from_config;
 use db_con::trading::ports::{BrokerSimulatorPort, PortfolioPort};

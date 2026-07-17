@@ -36,7 +36,7 @@ use db_con::trading::adapters::broker_handler::BrokerKafkaHandler;
 use db_con::trading::adapters::broker_simulator::SimpleBrokerSimulator;
 use db_con::trading::adapters::execution_handler::SimpleExecutionHandler;
 use db_con::trading::adapters::execution_handler_kafka::ExecutionKafkaHandler;
-use db_con::trading::adapters::momentum_strategy::MomentumStrategy;
+use db_con::trading::domain::strategies::momentum_strategy::MomentumStrategy;
 use db_con::trading::adapters::portfolio_manager::PortfolioManager;
 use db_con::trading::adapters::strategy_handler::StrategyHandler;
 use db_con::trading::domain::costs::cost_model_from_config;

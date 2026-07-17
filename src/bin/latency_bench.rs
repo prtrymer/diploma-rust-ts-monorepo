@@ -20,7 +20,7 @@ use db_con::database::domain::models::{Candle, StockTick, Timeframe};
 use db_con::database::ports::repository::Repository;
 use db_con::features::domain::registry::FeatureRegistry;
 use db_con::trading::adapters::broker_simulator::SimpleBrokerSimulator;
-use db_con::trading::adapters::momentum_strategy::MomentumStrategy;
+use db_con::trading::domain::strategies::momentum_strategy::MomentumStrategy;
 use db_con::trading::domain::events::{OrderEvent, OrderSide, OrderType, SignalDirection, SignalEvent};
 use db_con::trading::ports::{BrokerSimulatorPort, StrategyPort};
 

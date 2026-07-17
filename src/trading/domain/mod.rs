@@ -3,3 +3,4 @@ pub mod costs;
 pub mod events;
 pub mod models;
 pub mod sizing;
+pub mod strategies;

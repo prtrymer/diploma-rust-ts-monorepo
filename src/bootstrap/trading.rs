@@ -6,7 +6,7 @@ use crate::features::domain::registry::FeatureRegistry;
 use crate::model::domain::models::PredictionModel;
 use crate::trading::adapters::broker_simulator::SimpleBrokerSimulator;
 use crate::trading::adapters::execution_handler::SimpleExecutionHandler;
-use crate::trading::adapters::momentum_strategy::MomentumStrategy;
+use crate::trading::domain::strategies::momentum_strategy::MomentumStrategy;
 use crate::trading::adapters::portfolio_manager::PortfolioManager;
 use crate::trading::ports::{BrokerSimulatorPort, ExecutionHandlerPort, PortfolioPort, StrategyPort};
 use crate::data_ingestion::ports::DataSourcePort;

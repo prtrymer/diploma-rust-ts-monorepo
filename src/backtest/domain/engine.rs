@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::loader::HistoricalDataLoader;
+use crate::backtest::ports::HistoricalDataLoader;
 use super::report::BacktestReport;
 use crate::trading::domain::events::FillEvent;
 use crate::trading::ports::PortfolioPort;

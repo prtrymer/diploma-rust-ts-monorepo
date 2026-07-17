@@ -1,24 +1,17 @@
+//! Адаптер історичних даних: Scylla як сховище, Yahoo як джерело догрузки,
+//! Kafka-producer для replay. Імплементує порт `HistoricalDataLoader`.
+
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
+use crate::backtest::ports::HistoricalDataLoader;
 use crate::data_ingestion::adapters::yahoo_finance::YahooFinanceAdapter;
 use crate::data_ingestion::domain::models::StreamMessage;
 use crate::data_ingestion::ports::{DataSourcePort, MessageProducerPort};
 use crate::database::domain::models::{HistoricalCandle, StockTick};
 use crate::database::ports::repository::Repository;
-
-#[async_trait]
-pub trait HistoricalDataLoader: Send + Sync {
-    async fn load_and_replay(
-        &self,
-        symbol: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-        topic: &str,
-    ) -> Result<usize>;
-}
 
 pub struct ScyllaHistoricalLoader {
     repository: Arc<dyn Repository>,

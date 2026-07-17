@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 
 use db_con::backtest::domain::engine::{BacktestConfig, BacktestEngine};
 use db_con::backtest::domain::fill_collector::BacktestFillCollector;
-use db_con::backtest::domain::loader::ScyllaHistoricalLoader;
+use db_con::backtest::adapters::historical_loader::ScyllaHistoricalLoader;
 use db_con::backtest::domain::report::BacktestReport;
 use db_con::data_ingestion::adapters::kafka_producer::KafkaProducerAdapter;
 use db_con::data_ingestion::ports::MessageProducerPort;
@@ -33,7 +33,7 @@ use db_con::trading::adapters::broker_handler::BrokerKafkaHandler;
 use db_con::trading::adapters::broker_simulator::SimpleBrokerSimulator;
 use db_con::trading::adapters::execution_handler::SimpleExecutionHandler;
 use db_con::trading::adapters::execution_handler_kafka::ExecutionKafkaHandler;
-use db_con::trading::adapters::momentum_strategy::MomentumStrategy;
+use db_con::trading::domain::strategies::momentum_strategy::MomentumStrategy;
 use db_con::trading::adapters::portfolio_manager::PortfolioManager;
 use db_con::trading::adapters::strategy_handler::StrategyHandler;
 use db_con::trading::domain::costs::cost_model_from_config;

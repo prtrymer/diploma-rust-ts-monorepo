@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::backtest::domain::engine::{BacktestConfig, BacktestEngine};
 use crate::backtest::domain::fill_collector::BacktestFillCollector;
-use crate::backtest::domain::loader::ScyllaHistoricalLoader;
+use crate::backtest::adapters::historical_loader::ScyllaHistoricalLoader;
 use crate::features::domain::indicators::{
     BidAskSpreadProxyFeature, BollingerBandsFeature, EmaFeature, LiquidityImbalanceProxyFeature,
     MacdFeature, MeanReversionFeature, MomentumFeature, OrderFlowProxyFeature, RsiFeature,
@@ -25,7 +25,7 @@ use crate::trading::adapters::broker_handler::BrokerKafkaHandler;
 use crate::trading::adapters::broker_simulator::SimpleBrokerSimulator;
 use crate::trading::adapters::execution_handler::SimpleExecutionHandler;
 use crate::trading::adapters::execution_handler_kafka::ExecutionKafkaHandler;
-use crate::trading::adapters::momentum_strategy::MomentumStrategy;
+use crate::trading::domain::strategies::momentum_strategy::MomentumStrategy;
 use crate::trading::adapters::portfolio_manager::PortfolioManager;
 use crate::trading::adapters::strategy_handler::StrategyHandler;
 use crate::trading::ports::{

@@ -10,7 +10,7 @@ use super::{log_run, QuantArgs};
 use crate::data_ingestion::adapters::funding_csv::CsvFundingAdapter;
 use crate::data_ingestion::ports::funding::FundingDataPort;
 use crate::trading::adapters::broker_simulator::SimpleBrokerSimulator;
-use crate::trading::adapters::funding_carry::{FundingCarryBacktest, XsCarryConfig};
+use crate::backtest::domain::funding_carry::{FundingCarryBacktest, XsCarryConfig};
 use crate::trading::domain::costs::cost_model_from_config;
 use crate::trading::ports::BrokerSimulatorPort;
 

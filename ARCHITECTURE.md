@@ -54,15 +54,11 @@ hexagonal architecture · Kafka-replay (єдиний пайплайн бекте
 | domain | **CostModel** (M0.1): `SimpleCommissionSpread`, `AlmgrenChrissImpact`, `CompositeCost`, `ZeroCost` | `src/trading/domain/costs.rs` |
 | domain | **PositionSizer** — єдиний компонент сайзингу (SL/TP/Kelly-кап) | `src/trading/domain/sizing.rs` |
 | domain | **AllocationStrategy** (трейт `Strategy` з роадмапу) + `UniverseView` (PIT-доступ) | `src/trading/domain/allocation.rs` |
+| domain | Стратегії (інваріант 1: спільні для бектесту і live, без I/O): `TsmomStrategy` (M2.1), бенчмарки M0.2 (`BuyAndHold`, `EqualWeight`, `SixtyForty`), `CrossSectionalMomentum` (M3.2, dollar-neutral), `MomentumStrategy` (тіковий ML-momentum) | `src/trading/domain/strategies/` |
 | ports | `StrategyPort`, `ExecutionHandlerPort`, `BrokerSimulatorPort`, `PortfolioPort` | `src/trading/ports/` |
-| adapter | `MomentumStrategy` (тіковий ML-momentum) | `src/trading/adapters/momentum_strategy.rs` |
 | adapter | `SimpleExecutionHandler` (сигнал → ордер через PositionSizer) | `src/trading/adapters/execution_handler.rs` |
 | adapter | `SimpleBrokerSimulator` (виконання + CostModel) | `src/trading/adapters/broker_simulator.rs` |
 | adapter | `PortfolioManager` (лонг-only за замовч.; `new_allowing_short` для M3.2) | `src/trading/adapters/portfolio_manager.rs` |
-| adapter | Бенчмарки (M0.2): `BuyAndHold`, `EqualWeight`, `SixtyForty` | `src/trading/adapters/benchmark_strategies.rs` |
-| adapter | `TsmomStrategy` (M2.1, gate-валідація движка) | `src/trading/adapters/tsmom_strategy.rs` |
-| adapter | `CrossSectionalMomentum` (M3.2, dollar-neutral) | `src/trading/adapters/cross_sectional_momentum.rs` |
-| adapter | `FundingCarryBacktest` (M3.1) | `src/trading/adapters/funding_carry.rs` |
 | adapter | Kafka-обгортки портів: `StrategyHandler`, `ExecutionKafkaHandler`, `BrokerKafkaHandler` | `src/trading/adapters/*_handler*.rs` |
 | adapter | **HTX live** — підпис v2 (HMAC-SHA256), REST спот + USDT-M своп, `HtxCarryExecutor` (кошик зі shadow-журналу → дельта-нейтральні ноги: лонг спот + шорт перп). Dry-run за замовчуванням; відправка лише за `HTX_TRADING_ENABLED=true`; ідемпотентність через `live/orders.jsonl` + детерміновані client-order-id | `src/trading/adapters/htx/` |
 
@@ -75,7 +71,10 @@ hexagonal architecture · Kafka-replay (єдиний пайплайн бекте
 | domain | `PortfolioBacktester` — мультиактивний движок для AllocationStrategy | `src/backtest/domain/portfolio_engine.rs` |
 | domain | `ComparativeReport` — стратегія + бенчмарки поруч (M0.2) | `src/backtest/domain/multi_report.rs` |
 | domain | **Purged CV** з ембарго (M1.2) | `src/backtest/domain/purged_cv.rs` |
+| domain | `FundingCarryBacktest` (M3.1): carry-движок перп/спот, funding-акрут без подвійного обліку | `src/backtest/domain/funding_carry.rs` |
 | domain | Kafka-replay движок (легасі один-символьний) | `src/backtest/domain/engine.rs` |
+| ports | `HistoricalDataLoader` — завантаження історії + replay у топік | `src/backtest/ports.rs` |
+| adapter | `ScyllaHistoricalLoader` (Scylla-сховище, Yahoo-догрузка пропусків, Kafka-replay) | `src/backtest/adapters/historical_loader.rs` |
 | application | **Walk-forward** (M1.1): OOS-фолди, агрегація, DSR | `src/backtest/application/walk_forward.rs` |
 | application | `BenchmarkRunner` — прогін стратегії + всіх бенчмарків одним движком | `src/backtest/application/benchmark_runner.rs` |
 
@@ -171,8 +170,8 @@ property-тестом (M0.5).
 | M1.1 вікна не перетинаються, ембарго | `backtest::application::walk_forward::tests` |
 | M1.2 нуль інформаційного перекриття train/test | `backtest::domain::purged_cv::tests` |
 | M1.3 N trials ↑ → DSR ↓ | `metrics::tests::deflated_sharpe_decreases_with_trials` |
-| M3.1 нема подвійного обліку funding/costs | `trading::adapters::funding_carry::tests` |
-| M3.2 сума ваг = 0; turnover-банда | `trading::adapters::cross_sectional_momentum::tests` |
+| M3.1 нема подвійного обліку funding/costs | `backtest::domain::funding_carry::tests` |
+| M3.2 сума ваг = 0; turnover-банда | `trading::domain::strategies::cross_sectional_momentum::tests` |
 | CI-smoke повного стеку на фікстурі | `tests/smoke_backtest.rs` |
 
 ## Конвенції

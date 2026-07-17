@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::backtest::domain::multi_report::{ComparativeReport, StrategySummaryRow};
 use crate::backtest::domain::portfolio_engine::{PortfolioBacktester, PortfolioRunResult};
-use crate::trading::adapters::benchmark_strategies::{BuyAndHold, EqualWeight, SixtyForty};
+use crate::trading::domain::strategies::benchmark_strategies::{BuyAndHold, EqualWeight, SixtyForty};
 use crate::trading::adapters::portfolio_manager::PortfolioManager;
 use crate::trading::domain::allocation::{AllocationStrategy, AlignedMarketData};
 use crate::trading::ports::{BrokerSimulatorPort, PortfolioPort};

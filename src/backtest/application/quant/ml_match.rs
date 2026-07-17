@@ -9,7 +9,7 @@ use super::{log_run, QuantArgs};
 use crate::backtest::application::benchmark_runner::BenchmarkRunner;
 use crate::trading::adapters::broker_simulator::SimpleBrokerSimulator;
 use crate::trading::adapters::portfolio_manager::PortfolioManager;
-use crate::trading::adapters::tsmom_strategy::TsmomStrategy;
+use crate::trading::domain::strategies::tsmom_strategy::TsmomStrategy;
 use crate::trading::domain::allocation::{AlignedMarketData, UniverseView};
 use crate::trading::domain::costs::cost_model_from_config;
 use crate::trading::ports::{BrokerSimulatorPort, PortfolioPort};
@@ -30,7 +30,7 @@ pub async fn run_ml_match(args: &QuantArgs, data: Arc<AlignedMarketData>) -> Res
     use crate::model::domain::models::PredictionModel;
     use crate::model::domain::random_forest_like::RandomForestLikeModel;
     use crate::trading::adapters::execution_handler::SimpleExecutionHandler;
-    use crate::trading::adapters::momentum_strategy::MomentumStrategy;
+    use crate::trading::domain::strategies::momentum_strategy::MomentumStrategy;
     use crate::trading::domain::events::{OrderEvent, OrderSide, OrderType};
     use crate::trading::domain::sizing::PositionSizer;
     use crate::trading::ports::{ExecutionHandlerPort, StrategyPort};
