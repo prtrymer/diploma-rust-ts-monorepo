@@ -20,7 +20,6 @@ dotenv = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
 async-trait = "0.1"
 rust_decimal = { version = "1.33", features = ["maths"] }
 rust_decimal_macros = "1.33"
@@ -29,11 +28,9 @@ hex = "0.4"
 hmac = "0.12"
 base64 = "0.22"
 uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
-bigdecimal = "0.4"
 
 # HTTP Server
 axum = { version = "0.7", features = ["ws"] }
-tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 utoipa = { version = "4", features = ["axum_extras", "chrono", "decimal", "uuid"] }
 utoipa-swagger-ui = { version = "7", features = ["axum"] }
@@ -44,7 +41,6 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chron
 # Data ingestion
 reqwest = { version = "0.12", features = ["json"] }
 yahoo_finance_api = "2.2"
-futures = "0.3.32"
 smartcore = "0.4"
 polars = { version = "0.46", optional = true, default-features = false, features = ["csv"] }
 candle-core = { version = "0.8", optional = true }
@@ -59,6 +55,14 @@ urlencoding = "2"
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
+
+# Мінімум debug-інфо: панік-бектрейси з file:line лишаються, а target/debug
+# важить у рази менше (до цього виростав до 30 ГБ).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 [[bin]]
 name = "db-con"
