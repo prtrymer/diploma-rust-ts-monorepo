@@ -18,6 +18,42 @@ def grab(path, pattern, group=1, default="—"):
     return m.group(group).strip() if m else default
 
 
+def funding_coverage():
+    """Найстаріший «останній бар» серед funding-символів + вік у днях.
+
+    Мінімум, а не максимум: набір свіжий рівно настільки, наскільки свіжий
+    найвідсталіший інструмент. Ця колонка існує тому, що рядки 07-13…07-27
+    показували однакові числа як щотижневі спостереження — вхід не мінявся,
+    і з таблиці цього не було видно.
+    """
+    d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "datasets", "funding")
+    if not os.path.isdir(d):
+        return "—"
+    oldest = None
+    for name in sorted(os.listdir(d)):
+        if not name.endswith(".csv"):
+            continue
+        last = None
+        with open(os.path.join(d, name)) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("timestamp"):
+                    last = line.split(",", 1)[0]
+        if not last:
+            continue
+        if oldest is None or last < oldest:
+            oldest = last
+    if not oldest:
+        return "—"
+    try:
+        t = datetime.strptime(oldest[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return oldest[:10]
+    age = (datetime.now(timezone.utc) - t).days
+    return f"{oldest[:10]} ({age} дн.)"
+
+
 def main(out_dir, log_path):
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -65,12 +101,12 @@ def main(out_dir, log_path):
         "# Дослідницький журнал (автогенерований щотижня)\n\n"
         "| Дата | carry-кошик базлайн ≈%/рік | RF-ранжування ≈%/рік | стеля ≈%/рік "
         "| xs_carry OOS (maker) | TSMOM ETF · DSR · гейт M2.1 "
-        "| TSMOM крипта (довідково) |\n"
-        "|---|---|---|---|---|---|---|\n"
+        "| TSMOM крипта (довідково) | дані funding до |\n"
+        "|---|---|---|---|---|---|---|---|\n"
     )
     row = (
         f"| {date} | {base_pct} | {rf_pct} | {perfect_pct} | {xs_oos} "
-        f"| {etf_cell} | {crypto_cell} |\n"
+        f"| {etf_cell} | {crypto_cell} | {funding_coverage()} |\n"
     )
 
     if os.path.exists(log_path):

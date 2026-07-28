@@ -33,6 +33,20 @@ jobs:
           BACKFILL_DAYS: "30" # прогресивний бекфіл OI/long-short
         run: python3 scripts/topup_data.py
 
+      # Сторож застою. fundingRate є ТІЛЬКИ місячними архівами (денної
+      # категорії в data/futures/um/daily/ не існує), тож нормальний лаг —
+      # до 31 дня. REST-дозбір закриває хвіст, але з US-раннерів fapi
+      # заблокований, тож у CI він мовчки пропускається і свіжість тримається
+      # локальними прогонами `python3 scripts/topup_data.py`.
+      #
+      # Поріг 40 днів ловить не лаг, а поломку: архів перестав публікуватись,
+      # скрипт відвалився, або локальні дозбори припинились. Саме такий
+      # мовчазний застій зробив рядки 07-13…07-27 копіями одного прогону.
+      - name: Guard against stale funding data
+        env:
+          MAX_FUNDING_AGE_DAYS: "40"
+        run: python3 scripts/topup_data.py --check-freshness
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 

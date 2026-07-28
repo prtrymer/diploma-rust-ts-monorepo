@@ -16,6 +16,7 @@ GitHub Actions (американські IP, які fapi блокує), і ло�
 """
 import csv
 import io
+import json
 import os
 from decimal import Decimal as D
 import sys
@@ -168,6 +169,68 @@ def topup_funding(sym, now):
     return append_rows(path, added)
 
 
+# ── 2b. funding: хвіст поточного місяця через REST ───────────────────────────
+#
+# Архів публікує fundingRate ТІЛЬКИ місячними файлами (перевірено: у
+# data/futures/um/daily/ такої категорії немає взагалі), тому після кроку 2
+# дані завжди відстають від 1 до 31 дня. Саме цей лаг зробив три рядки
+# RESEARCH_LOG копіями одного прогону: вхід не мінявся, а таблиця виглядала
+# як щотижневе підтвердження.
+#
+# REST закриває хвіст, але доступний не звідусіль (з US-раннерів GitHub
+# fapi заблокований). Тому: перша ж відмова вимикає крок цілком і тихо —
+# це ДОЗБІР, а не джерело правди. Архів лишається авторитетним, REST лише
+# додає те, чого архів ще не опублікував.
+FAPI = "https://fapi.binance.com/fapi/v1/fundingRate"
+_rest_blocked = False
+
+
+def http_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "research-topup/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
+def topup_funding_rest(sym, now):
+    global _rest_blocked
+    if _rest_blocked:
+        return 0
+    path = os.path.join(ROOT, "datasets", "funding", f"{sym}.csv")
+    last = last_ts(path)
+    if last is None:
+        return 0
+
+    start_ms = int(last.timestamp() * 1000) + 1
+    try:
+        payload = http_json(f"{FAPI}?symbol={sym}&startTime={start_ms}&limit=1000")
+    except Exception as e:  # гео-блок, мережа, ліміт — усе однаково фатально
+        _rest_blocked = True
+        print(f"  REST-дозбір недоступний ({e}) — лишаємось на архіві")
+        return 0
+
+    if not isinstance(payload, list):
+        _rest_blocked = True
+        print(f"  REST повернув не список ({type(payload).__name__}) — крок вимкнено")
+        return 0
+
+    added = []
+    for item in payload:
+        try:
+            ts = iso(item["fundingTime"])
+            t = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+            rate = fixed(item["fundingRate"])
+            mark = fixed(item["markPrice"])
+        except (KeyError, TypeError, ValueError):
+            continue  # кривий запис пропускаємо, але файл не псуємо
+        if t <= last or D(mark) <= 0:
+            continue
+        # mark у обидві колонки — так само, як це робить архівний шлях вище.
+        added.append(f"{ts},{sym},{rate},{mark},{mark}")
+
+    time.sleep(0.2)  # ліміт ваги fapi
+    return append_rows(path, added)
+
+
 # ── 3. daily: 1d klines кошика TSMOM ─────────────────────────────────────────
 def topup_daily(sym, now):
     path = os.path.join(ROOT, "datasets", "daily", f"{sym}.csv")
@@ -248,7 +311,115 @@ def topup_metrics(sym, now):
     return len(new_rows)
 
 
+def coverage(name):
+    """(найстаріший «останній бар» по набору, вік у днях, к-сть файлів).
+
+    Береться МІНІМУМ по символах, а не максимум: набір свіжий рівно настільки,
+    наскільки свіжий найвідсталіший інструмент. Максимум приховав би, що
+    13 із 45 символів застрягли на місяць раніше за решту.
+    """
+    d = os.path.join(ROOT, "datasets", name)
+    if not os.path.isdir(d):
+        return None, None, 0
+    stamps = []
+    for f in sorted(os.listdir(d)):
+        if not f.endswith(".csv"):
+            continue
+        t = last_ts(os.path.join(d, f))
+        if t:
+            stamps.append(t)
+    if not stamps:
+        return None, None, 0
+    oldest = min(stamps)
+    age = (datetime.now(UTC) - oldest).days
+    return oldest, age, len(stamps)
+
+
+def report_coverage(now):
+    """Друкує вік кожного набору. Три тижні поспіль RESEARCH_LOG показував
+    однакові числа як щотижневі спостереження — саме тому, що ніде не було
+    видно, що вхід не змінюється."""
+    print("\nпокриття даних (за найвідсталішим символом):")
+    for name in ("funding", "perp_meta", "metrics", "daily", "funding_htx"):
+        oldest, age, n = coverage(name)
+        if oldest is None:
+            continue
+        print(f"  {name:<12} {oldest:%Y-%m-%d} — {age:>3} дн. тому, {n} символів")
+
+
+MAX_FUNDING_AGE_DAYS = int(os.environ.get("MAX_FUNDING_AGE_DAYS", "40"))
+
+
+def check_freshness():
+    """Валить прогін, якщо funding застояний або побитий.
+
+    Поріг ловить не звичайний лаг (архів місячний — до 31 дня це норма),
+    а поломку: джерело перестало публікуватись, скрипт відвалився, або
+    локальні REST-дозбори припинились.
+    """
+    report_coverage(datetime.now(UTC))
+    problems = []
+
+    oldest, age, n = coverage("funding")
+    if oldest is None:
+        problems.append("набір funding порожній або відсутній")
+    elif age > MAX_FUNDING_AGE_DAYS:
+        problems.append(
+            f"funding застояний: найвідсталіший символ на {oldest:%Y-%m-%d}, "
+            f"{age} дн. тому (поріг {MAX_FUNDING_AGE_DAYS}). Архів місячний, "
+            f"тож або джерело зупинилось, або потрібен локальний прогін "
+            f"`python3 scripts/topup_data.py` (REST з US-раннерів заблокований)."
+        )
+
+    # Структурні дефекти. Розділені на фатальні й на шум від біржі —
+    # сигнал, який завжди червоний, перестають читати.
+    warnings = []
+    d = os.path.join(ROOT, "datasets", "funding")
+    if os.path.isdir(d):
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".csv"):
+                continue
+            rows = []
+            with open(os.path.join(d, name)) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("timestamp"):
+                        rows.append(line.split(","))
+            stamps = [r[0] for r in rows]
+            if stamps != sorted(stamps):
+                problems.append(f"{name}: таймстемпи не відсортовані")
+            # Нульова марк-ціна ламає дохідності діленням на нуль. Правило
+            # пайплайну («без ціни рядок не пишемо») діє і в архівному шляху,
+            # і в REST-дозборі — тут воно лише перевіряється.
+            bad_px = sum(1 for r in rows if len(r) < 4 or D(r[3]) <= 0)
+            if bad_px:
+                problems.append(f"{name}: {bad_px} рядків із недодатною марк-ціною")
+            # А от дубльований час — НЕ дефект наших даних: біржа справді
+            # віддає дві події в одну мить (перевірено на NVDAUSDT
+            # 2026-06-04T00:00 — два розрахунки при зміні інтервалу фандингу).
+            # Видаляти було б підробкою запису; попереджаємо, бо завантажувачі
+            # ключують за часом і мовчки лишать один із них.
+            dups = len(stamps) - len(set(stamps))
+            if dups:
+                warnings.append(f"{name}: {dups} дубльованих таймстемпів (так віддає біржа)")
+
+    if warnings:
+        print("\nпопередження (не валять прогін):")
+        for w in warnings:
+            print(f"  ! {w}")
+
+    if problems:
+        print("\nпроблеми з даними:", file=sys.stderr)
+        for p in problems:
+            print(f"  ✗ {p}", file=sys.stderr)
+        return 1
+    print("\nдані свіжі й цілісні")
+    return 0
+
+
 def main():
+    if "--check-freshness" in sys.argv:
+        return check_freshness()
     now = datetime.now(UTC)
     os.makedirs(os.path.join(ROOT, "datasets", "metrics"), exist_ok=True)
     syms = symbols()
@@ -258,15 +429,18 @@ def main():
         if f.endswith(".csv")
     )
     print(f"topup: {len(syms)} perp symbols, {len(daily_syms)} daily symbols")
-    totals = {"perp_meta": 0, "funding": 0, "daily": 0, "metrics": 0}
+    totals = {"perp_meta": 0, "funding": 0, "funding_rest": 0, "daily": 0, "metrics": 0}
     for sym in syms:
         totals["perp_meta"] += topup_perp_meta(sym, now)
         totals["funding"] += topup_funding(sym, now)
+        # Порядок важливий: спершу архів (авторитетний), потім REST на хвіст.
+        totals["funding_rest"] += topup_funding_rest(sym, now)
         totals["metrics"] += topup_metrics(sym, now)
         time.sleep(0.05)
     for sym in daily_syms:
         totals["daily"] += topup_daily(sym, now)
     print(f"appended rows: {totals}")
+    report_coverage(now)
     return 0
 
 
