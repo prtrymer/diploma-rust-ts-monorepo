@@ -24,7 +24,9 @@ use db_con::backtest::application::quant::{
     build_strategy, load_csv_dir, log_run, run_carry, run_funding_ml, run_ml_match,
     run_shadow_carry, run_xs_carry, QuantArgs,
 };
-use db_con::backtest::application::walk_forward::WalkForwardRunner;
+use db_con::backtest::application::walk_forward::{
+    evaluate_tsmom_gate, GateVerdict, WalkForwardRunner, DSR_SIGNIFICANCE_THRESHOLD,
+};
 use db_con::backtest::domain::purged_cv::{combinatorial_purged_folds, PurgedCvConfig};
 use db_con::database::adapters::run_logger_file::FileRunLogger;
 use db_con::database::ports::run_logger::RunLogger;
@@ -48,6 +50,7 @@ fn parse_args() -> Result<QuantArgs> {
     let mut top_k = 10usize;
     let mut xs_trailing: Option<usize> = None;
     let mut xs_rebalance: Option<usize> = None;
+    let mut runs_log = PathBuf::from(QuantArgs::DEFAULT_RUNS_LOG);
     let mut config = RunConfig::default();
 
     let mut i = 1;
@@ -150,6 +153,12 @@ fn parse_args() -> Result<QuantArgs> {
                 }
                 i += 2;
             }
+            "--runs-log" => {
+                if let Some(v) = argv.get(i + 1) {
+                    runs_log = PathBuf::from(v);
+                }
+                i += 2;
+            }
             "--print-config-hash" => {
                 let c = RunConfig::default();
                 println!("{}", c.config_hash());
@@ -174,6 +183,7 @@ fn parse_args() -> Result<QuantArgs> {
         top_k,
         xs_trailing,
         xs_rebalance,
+        runs_log,
     })
 }
 
@@ -236,18 +246,27 @@ async fn main() -> Result<()> {
     println!("\n=== Comparative Report (net-of-cost, single period) ===");
     print!("{}", report.render());
 
+    // Джерело даних НЕ входить у config_hash (конфіг описує параметри
+    // стратегії, не юніверс), тому той самий tsmom по ETF і по крипті дає
+    // однаковий хеш. Без цього поля вони злилися б в одну «спробу» в
+    // trial_sharpes, і пізніший прогін затирав би ранішній. Це різні
+    // гіпотези про те, де живе ефект, і рахуватись мусять окремо.
     let mut run_metrics = serde_json::json!({
         "strategy": args.strategy,
+        "dataset": args.dataset_label(),
         "comparative": serde_json::to_value(&report)?,
     });
 
     // Walk-forward OOS (M1.1) + deflated Sharpe (M1.3).
+    let mut m21_gate_failed = false;
     if args.walk_forward {
-        let n_trials = FileRunLogger::new("runs/runs.jsonl")
-            .count_distinct_configs()
+        // N trials і σ(SR) для deflated Sharpe — по перебраних конфігураціях
+        // ТІЄЇ Ж стратегії. Раніше бралась кількість усіх конфігів у журналі,
+        // тож TSMOM карався за гіпотези carry і funding_ml.
+        let prior_trials = FileRunLogger::new(&args.runs_log)
+            .trial_sharpes(&args.strategy)
             .await
-            .unwrap_or(0)
-            .max(1);
+            .unwrap_or_default();
         let portfolio: Arc<dyn PortfolioPort> = if allow_short {
             Arc::new(PortfolioManager::new_allowing_short(args.capital))
         } else {
@@ -257,23 +276,30 @@ async fn main() -> Result<()> {
         let args_ref = &args;
         let symbols_ref = symbols.clone();
         let factory = move || build_strategy(args_ref, symbols_ref.clone()).0;
-        let summary = wf.run(&factory, &args.config.walk_forward, n_trials).await?;
+        let summary = wf
+            .run(&factory, &args.config.walk_forward, &prior_trials)
+            .await?;
 
         println!("\n=== Walk-Forward (OOS only, net-of-cost) ===");
         for f in &summary.folds {
             println!(
-                "  test [{}, {}): ret {}% | sharpe {} | mdd {}% | trades {} | costs {}",
+                "  test [{}, {}): ret {}% | sharpe {} | mdd {}% | trades {} | costs {}{}",
                 f.fold.test_start,
                 f.fold.test_end,
                 f.oos_return_pct.round_dp(2),
                 f.oos_sharpe.round_dp(2),
                 f.oos_max_drawdown_pct.round_dp(2),
                 f.oos_trades,
-                f.oos_total_costs.round_dp(2)
+                f.oos_total_costs.round_dp(2),
+                if f.oos_trades == 0 {
+                    "  ← без угод, поза медіаною"
+                } else {
+                    ""
+                }
             );
         }
         println!(
-            "Median OOS Sharpe: {} | Median OOS Return: {}%",
+            "Median OOS Sharpe: {} | Median OOS Return: {}%  (по {} з {} фолдів)",
             summary
                 .median_oos_sharpe
                 .map(|s| s.round_dp(3).to_string())
@@ -282,34 +308,79 @@ async fn main() -> Result<()> {
                 .median_oos_return_pct
                 .map(|s| s.round_dp(2).to_string())
                 .unwrap_or_else(|| "N/A".into()),
+            summary.evaluated_folds,
+            summary.folds.len(),
         );
+        if summary.empty_folds > 0 {
+            println!(
+                "  ⚠ {} фолд(ів) без жодної угоди виключено з медіан — у цих вікнах \
+                 стратегія не давала сигналів, це не Sharpe 0",
+                summary.empty_folds
+            );
+        }
+        // Довідкове число, не умова гейта: поріг 0.95 недосяжний для явища
+        // силою Sharpe 0.4–0.8 на ~650 OOS-днях (треба 1000+ навіть за нульового
+        // розкиду). Друкуємо разом із входами, щоб його можна було пояснити.
         match summary.deflated_sharpe {
             Some(d) => println!(
-                "Deflated Sharpe (N trials={}): {:.4} {}",
-                summary.n_trials,
+                "Deflated Sharpe (довідково): {:.4} {} | спроб: {}, розкид по спробах: {}",
                 d,
-                if d >= 0.95 { "✓" } else { "⚠" }
+                if d >= DSR_SIGNIFICANCE_THRESHOLD {
+                    "✓"
+                } else {
+                    "⚠"
+                },
+                summary.n_trials,
+                summary
+                    .trial_dispersion
+                    .map(|v| format!("{v:.3}"))
+                    .unwrap_or_else(|| "—".into()),
             ),
             None => println!("Deflated Sharpe: N/A"),
         }
 
-        // GATE M2.1 для TSMOM: додатний OOS Sharpe ~0.4–0.8 після витрат.
+        // GATE M2.1 для TSMOM — три структурні умови, які на наявному обсязі
+        // даних перевірити можна: движок бачить ефект, бачив його на всьому
+        // періоді, і результат не тримається на одному вдалому відрізку.
         if args.strategy == "tsmom" {
-            if let Some(med) = summary.median_oos_sharpe {
-                if med >= dec!(0.4) {
-                    println!("GATE M2.1: OOS Sharpe {med} ≥ 0.4 — движок відтворює TSMOM ✓");
-                } else if med > Decimal::ZERO {
-                    println!(
-                        "GATE M2.1: OOS Sharpe {med} додатний, але < 0.4 — межовий результат, \
-                         перевір період/кошик"
-                    );
-                } else {
-                    println!(
-                        "GATE M2.1 ПРОВАЛЕНО: OOS Sharpe {med} ≤ 0 — СТОП, шукай баг у движку \
-                         (kill-критерій), Фаза 3 не починається"
-                    );
-                }
+            let verdict = evaluate_tsmom_gate(&summary);
+            let med = summary
+                .median_oos_sharpe
+                .map(|m| m.round_dp(3).to_string())
+                .unwrap_or_else(|| "N/A".into());
+            let (ok, tot) = (summary.positive_folds, summary.evaluated_folds);
+            match verdict {
+                GateVerdict::Passed => println!(
+                    "GATE M2.1 ПРОЙДЕНО ✓: OOS Sharpe {med} ≥ 0.4, жодного порожнього відрізка, \
+                     {ok} з {tot} відрізків у плюсі — движок відтворює TSMOM на всьому періоді"
+                ),
+                GateVerdict::BlindWindow => println!(
+                    "GATE M2.1 ПРОВАЛЕНО: {} відрізк(ів) без жодної угоди. Медіана {med} описує \
+                     лише ті вікна, де стратегія була зряча, а не весь період — спершу розберись, \
+                     чому вона там мовчала (типова причина: long_only на падінні), і лише потім \
+                     дивись на число",
+                    summary.empty_folds
+                ),
+                GateVerdict::Unstable => println!(
+                    "GATE M2.1 ПРОВАЛЕНО: лише {ok} з {tot} відрізків у плюсі — медіану {med} \
+                     витягнули один-два вдалі періоди, стійкості немає"
+                ),
+                GateVerdict::BelowRange => println!(
+                    "GATE M2.1 ПРОВАЛЕНО: OOS Sharpe {med} додатний, але < 0.4 — движок бачить \
+                     тренд слабше за документований ефект, перевір період/кошик"
+                ),
+                GateVerdict::EngineFailure => println!(
+                    "GATE M2.1 ПРОВАЛЕНО: OOS Sharpe {med} ≤ 0 — СТОП, шукай баг у движку \
+                     (kill-критерій), Фаза 3 не починається"
+                ),
+                // Мовчання тут читалося б як «пройдено»: гейт без жодного
+                // оціненого фолда не пройдений, він неоцінений.
+                GateVerdict::NotEvaluated => println!(
+                    "GATE M2.1 НЕ ОЦІНЕНО: жоден OOS-фолд не містить угод — Sharpe нема з чого \
+                     рахувати, гейт не пройдено"
+                ),
             }
+            m21_gate_failed = !verdict.is_passed();
         }
         run_metrics["walk_forward"] = serde_json::to_value(&summary)?;
     }
@@ -336,6 +407,15 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Прогін логується ЗАВЖДИ, навіть коли гейт провалено (M0.4: провенанс не
+    // залежить від результату) — і лише після цього ненульовий вихід.
     log_run(&args, run_metrics).await;
+
+    // Kill-критерій M2.1: провалений гейт валить процес, щоб CI/research
+    // ставали червоними, а не ховали вердикт у хвості логу.
+    anyhow::ensure!(
+        !m21_gate_failed,
+        "GATE M2.1 не пройдено — Фаза 3 закрита до виправлення (див. вердикт вище)"
+    );
     Ok(())
 }

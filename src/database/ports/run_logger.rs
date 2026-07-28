@@ -38,4 +38,17 @@ pub trait RunLogger: Send + Sync {
     async fn count_runs(&self) -> Result<usize>;
     /// Кількість прогонів З УНІКАЛЬНИМ конфігом (чесніший N trials).
     async fn count_distinct_configs(&self) -> Result<usize>;
+
+    /// Медіанний OOS Sharpe кожної унікальної конфігурації **тієї самої
+    /// стратегії** — вхід для deflated Sharpe (M1.3).
+    ///
+    /// Саме це вимагає формула Bailey–López de Prado: розкид результатів по
+    /// ПЕРЕБРАНИХ ГІПОТЕЗАХ. Раніше сюди підставлявся розкид по фолдах одного
+    /// прогону (зовсім інша величина), а N брався як `count_distinct_configs`
+    /// по всіх стратегіях разом — тобто TSMOM карався за конфіги carry і
+    /// funding_ml, які до нього не мають стосунку.
+    ///
+    /// Дедуплікація за config_hash: повтор того самого конфіга — не нова
+    /// гіпотеза. Прогони без walk-forward пропускаються (немає Sharpe).
+    async fn trial_sharpes(&self, strategy: &str) -> Result<Vec<f64>>;
 }

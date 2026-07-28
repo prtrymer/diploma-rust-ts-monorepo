@@ -65,4 +65,30 @@ impl RunLogger for PostgresRunLogger {
         let n: i64 = row.try_get("n")?;
         Ok(n as usize)
     }
+
+    /// Один рядок на пару (config_hash, юніверс) — останній за часом; лише
+    /// прогони заданої стратегії, у яких є walk-forward (інакше Sharpe немає).
+    /// Юніверс у ключі, бо в config_hash він не входить: той самий tsmom по
+    /// ETF і по крипті — дві різні гіпотези з однаковим хешем.
+    async fn trial_sharpes(&self, strategy: &str) -> Result<Vec<f64>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT ON (config_hash, COALESCE(metrics ->> 'dataset', ''))
+                   metrics #>> '{walk_forward,median_oos_sharpe}' AS sharpe
+              FROM runs
+             WHERE metrics ->> 'strategy' = $1
+               AND metrics #> '{walk_forward,median_oos_sharpe}' IS NOT NULL
+             ORDER BY config_hash, COALESCE(metrics ->> 'dataset', ''), created_at DESC
+            "#,
+        )
+        .bind(strategy)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.try_get::<Option<String>, _>("sharpe").ok().flatten())
+            .filter_map(|s| s.parse::<f64>().ok())
+            .collect())
+    }
 }

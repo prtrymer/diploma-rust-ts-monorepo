@@ -16,7 +16,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use db_con::backtest::application::benchmark_runner::BenchmarkRunner;
-use db_con::backtest::application::walk_forward::WalkForwardRunner;
+use db_con::backtest::application::walk_forward::{
+    evaluate_tsmom_gate, GateVerdict, WalkForwardRunner,
+};
 use db_con::shared::run_config::RunConfig;
 use db_con::trading::adapters::broker_simulator::SimpleBrokerSimulator;
 use db_con::trading::adapters::portfolio_manager::PortfolioManager;
@@ -130,7 +132,7 @@ async fn smoke_walk_forward_is_deterministic() {
             Arc::new(PortfolioManager::new_allowing_short(dec!(100000)));
         let wf = WalkForwardRunner::new(data.clone(), broker(), portfolio, dec!(100000));
         let factory = || Box::new(tsmom()) as Box<dyn AllocationStrategy>;
-        wf.run(&factory, &RunConfig::default().walk_forward, 1)
+        wf.run(&factory, &RunConfig::default().walk_forward, &[])
             .await
             .expect("wf run")
     };
@@ -144,10 +146,16 @@ async fn smoke_walk_forward_is_deterministic() {
     );
 }
 
-// CI-регресія GATE M2.1: на синтетиці з вбудованими трендами TSMOM мусить давати
-// додатний OOS Sharpe (фактично ~3.9 при порозі гейта 0.4 — десятикратний запас).
-// Рядок «GATE M2.1 ✓» у виводі бінарника — інформаційний println без впливу на
-// exit code, тож запобіжником від «движок перестав бачити тренд» є саме цей assert.
+// CI-регресія GATE M2.1: на синтетиці з вбудованими трендами TSMOM мусить
+// проходити всі три структурні умови гейта — Sharpe ≥ 0.4 (фактично ~4),
+// жодного відрізка без угод, більшість відрізків у плюсі.
+//
+// Порожня історія спроб (`&[]`) — навмисно: фікстура сторожує ДВИЖОК, а не
+// дослідницьку історію. Скільки гіпотез перебрано — властивість runs.jsonl,
+// вона росте з часом і не має робити CI червоним. Що deflated Sharpe реагує
+// на кількість спроб і на їхній розкид, перевіряють юніт-тести
+// walk_forward::deflated_sharpe_reacts_to_trial_history_not_folds і
+// metrics::deflated_sharpe_decreases_with_trials.
 #[tokio::test]
 async fn smoke_tsmom_gate_holds_on_fixture() {
     let data = fixture_data();
@@ -156,16 +164,18 @@ async fn smoke_tsmom_gate_holds_on_fixture() {
     let wf = WalkForwardRunner::new(data.clone(), broker(), portfolio, dec!(100000));
     let factory = || Box::new(tsmom()) as Box<dyn AllocationStrategy>;
     let summary = wf
-        .run(&factory, &RunConfig::default().walk_forward, 1)
+        .run(&factory, &RunConfig::default().walk_forward, &[])
         .await
         .expect("wf run");
-    let med = summary
-        .median_oos_sharpe
-        .expect("walk-forward на фікстурі має дати OOS-фолди з Sharpe");
-    assert!(
-        med >= dec!(0.4),
-        "GATE M2.1 на фікстурі: median OOS Sharpe {med} < 0.4 — \
-         движок перестав відтворювати тренд, шукай баг у движку"
+
+    let verdict = evaluate_tsmom_gate(&summary);
+    assert_eq!(
+        verdict,
+        GateVerdict::Passed,
+        "GATE M2.1 на фікстурі: {verdict:?} (median OOS Sharpe {:?}, DSR {:?}) — \
+         движок перестав відтворювати тренд, шукай баг у движку",
+        summary.median_oos_sharpe,
+        summary.deflated_sharpe,
     );
 }
 

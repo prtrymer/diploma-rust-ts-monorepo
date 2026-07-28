@@ -43,6 +43,27 @@ pub struct QuantArgs {
     pub top_k: usize,
     pub xs_trailing: Option<usize>,
     pub xs_rebalance: Option<usize>,
+    /// Куди пишеться провенанс прогону і звідки читається лічильник trials
+    /// для deflated Sharpe (M0.4 → M1.3). Не константа, бо фікстурні прогони
+    /// мусять судитися за власною історією гіпотез, а не за дослідницькою:
+    /// n_trials росте з часом і інакше робив би CI червоним на рівному місці.
+    pub runs_log: PathBuf,
+}
+
+impl QuantArgs {
+    /// Дефолтний журнал прогонів дослідницького пайплайну.
+    pub const DEFAULT_RUNS_LOG: &'static str = "runs/runs.jsonl";
+
+    /// Юніверс прогону одним рядком — пишеться в metrics і розрізняє спроби,
+    /// які мають однаковий config_hash (див. `RunLogger::trial_sharpes`).
+    pub fn dataset_label(&self) -> String {
+        self.data_dir
+            .as_ref()
+            .or(self.funding_dir.as_ref())
+            .or(self.funding_csv.as_ref())
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| self.symbol.clone())
+    }
 }
 
 pub async fn log_run(args: &QuantArgs, metrics: serde_json::Value) {
@@ -51,10 +72,11 @@ pub async fn log_run(args: &QuantArgs, metrics: serde_json::Value) {
         args.config.canonical_json(),
         metrics,
     );
-    let logger = FileRunLogger::new("runs/runs.jsonl");
+    let path = args.runs_log.display().to_string();
+    let logger = FileRunLogger::new(&args.runs_log);
     match logger.log_run(&record).await {
         Ok(()) => println!(
-            "Run {} logged to runs/runs.jsonl (config {})",
+            "Run {} logged to {path} (config {})",
             record.run_id,
             &record.config_hash[..12]
         ),
