@@ -43,16 +43,35 @@ def main(out_dir, log_path):
     if m:
         xs_oos = f"net {float(m.group(1)):.0f} / Sharpe {float(m.group(2)):.2f}"
 
-    # tsmom: медіанний OOS Sharpe.
-    tsmom_med = grab(tsm, r"Median OOS Sharpe: ([\-\d.]+)")
+    # tsmom: медіанний OOS Sharpe + DSR + вердикт гейта в одній комірці.
+    # Сирий Sharpe наодинці й був тим «по букві пройдено»: 0.878 у колонці
+    # виглядає здорово, поки поруч не стоїть 0.05 після корекції на гіпотези.
+    # tsmom.txt — ETF-кошик (гейт), tsmom_crypto.txt — крипта (довідково).
+    def tsmom_cell(path, with_gate):
+        med = grab(path, r"Median OOS Sharpe: ([\-\d.]+)")
+        if med == "—":
+            return "—"
+        dsr = grab(path, r"Deflated Sharpe \(довідково\): ([\-\d.]+)")
+        cell = f"{med} · DSR {dsr}"
+        if with_gate:
+            text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+            cell += " · гейт " + ("✓" if "GATE M2.1 ПРОЙДЕНО" in text else "✗")
+        return cell
+
+    etf_cell = tsmom_cell(tsm, with_gate=True)
+    crypto_cell = tsmom_cell(os.path.join(out_dir, "tsmom_crypto.txt"), with_gate=False)
 
     header = (
         "# Дослідницький журнал (автогенерований щотижня)\n\n"
         "| Дата | carry-кошик базлайн ≈%/рік | RF-ранжування ≈%/рік | стеля ≈%/рік "
-        "| xs_carry OOS (maker) | TSMOM медіанний OOS Sharpe |\n"
-        "|---|---|---|---|---|---|\n"
+        "| xs_carry OOS (maker) | TSMOM ETF · DSR · гейт M2.1 "
+        "| TSMOM крипта (довідково) |\n"
+        "|---|---|---|---|---|---|---|\n"
     )
-    row = f"| {date} | {base_pct} | {rf_pct} | {perfect_pct} | {xs_oos} | {tsmom_med} |\n"
+    row = (
+        f"| {date} | {base_pct} | {rf_pct} | {perfect_pct} | {xs_oos} "
+        f"| {etf_cell} | {crypto_cell} |\n"
+    )
 
     if os.path.exists(log_path):
         content = open(log_path, encoding="utf-8").read()

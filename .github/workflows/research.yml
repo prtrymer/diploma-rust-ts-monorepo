@@ -55,9 +55,43 @@ jobs:
             --funding-dir datasets/funding --strategy xs_carry \
             --top-k 10 --xs-trailing 63 --xs-rebalance 42 \
             | tee research_out/xs_carry.txt
+          # Провалений гейт M2.1 валить бінарник ненульовим кодом (kill-критерій).
+          # Тут це НЕ має обривати пайплайн: докачка даних, тіньовий журнал і
+          # коміт мусять відпрацювати в будь-якому разі, інакше провалений гейт
+          # заодно вбиває єдине джерело свіжих даних. Код відкладаємо і
+          # піднімаємо останнім кроком, ПІСЛЯ коміту.
+          # ГЕЙТ M2.1 — по ETF-кошику (акції/облігації/золото/товари), не по
+          # крипті. Крипта як вимірювальний інструмент хитка: 8 монет ходять
+          # як одна річ, розкид між відрізками 0.82 проти 0.39 у ETF, а медіана
+          # стрибнула 0.642 → 1.037 від семи додаткових днів даних. Гиря, вага
+          # якої змінюється при повторному зважуванні, — не гиря. ETF дає ще й
+          # вшестеро довше OOS-вікно (1532 дні проти 651).
+          #
+          # --allow-short обов'язковий: TSMOM у Moskowitz–Ooi–Pedersen — це лонг
+          # зростаючих І ШОРТ падаючих, і еталон 0.4–0.8 виміряний на повній
+          # версії. Довга-тільки половина сліпа на ведмежому ринку і дає нуль
+          # угод — гейт міряв би порожнечу.
+          #
+          # Провалений гейт валить бінарник ненульовим кодом; тут це НЕ має
+          # обривати пайплайн — код відкладаємо і піднімаємо після коміту.
+          gate_rc=0
           ./target/release/quant-backtest \
-            --data-dir datasets/daily --strategy tsmom --walk-forward \
-            | grep -vE "^📈|^🚀" | tee research_out/tsmom.txt
+            --data-dir datasets/etf --strategy tsmom --walk-forward --allow-short \
+            > research_out/tsmom_raw.txt 2>&1 || gate_rc=$?
+          grep -vE "^📈|^🚀" research_out/tsmom_raw.txt > research_out/tsmom.txt || true
+          cat research_out/tsmom.txt
+          echo "$gate_rc" > research_out/m21_gate_rc
+
+          # Крипта — ДОВІДКОВО. На гейт не впливає (|| true): це юніверс, який
+          # ми торгуємо, і бачити його поруч корисно, але вимірювати ним движок
+          # не можна. Логується окремою спробою, бо dataset входить у ключ
+          # trial_sharpes (config_hash у обох прогонів однаковий).
+          ./target/release/quant-backtest \
+            --data-dir datasets/daily --strategy tsmom --walk-forward --allow-short \
+            > research_out/tsmom_crypto_raw.txt 2>&1 || true
+          grep -vE "^📈|^🚀" research_out/tsmom_crypto_raw.txt \
+            > research_out/tsmom_crypto.txt || true
+          cat research_out/tsmom_crypto.txt
 
       # Тіньовий трейдинг: ex-ante кошик тижня (базлайн + RF, A/B) у
       # shadow/ledger.jsonl + оцінка минулих тижнів. Git-таймстемп коміту
@@ -93,3 +127,15 @@ jobs:
             git commit -m "research: weekly refresh $(date -u +%F) [skip ci]"
             git push
           fi
+
+      # Kill-критерій M2.1 (GATE Фази 2). Стоїть ПІСЛЯ коміту навмисно: дані
+      # за тиждень уже збережені, а прогін стає червоним — Фаза 3 формально
+      # закрита, доки TSMOM не переживе корекцію на множинне тестування.
+      - name: Enforce GATE M2.1
+        run: |
+          rc=$(cat research_out/m21_gate_rc 2>/dev/null || echo 0)
+          if [ "$rc" != "0" ]; then
+            echo "::error title=GATE M2.1::TSMOM не пройшов гейт — дивись вердикт у кроці «Run research suite». Дані за тиждень закомічені, але Фаза 3 закрита."
+            exit 1
+          fi
+          echo "GATE M2.1 пройдено."
