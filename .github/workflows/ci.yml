@@ -39,13 +39,26 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      # Страж проти тихої поломки даних (офлайн, без мережі). У datasets/etf/
+      # сім місяців пролежала HTML-сторінка анти-бот перевірки замість цін —
+      # ніщо цього не ловило, бо ці файли не читає жоден тест.
+      - name: verify committed datasets
+        run: python3 scripts/fetch_reference_data.py --verify
+
       # Smoke-бектест на маленькому фікстур-датасеті (офлайн, детермінований):
-      # перевіряє лише, що повний CLI-шлях (tsmom+walk-forward, carry) відпрацьовує
-      # без падіння. Рядки GATE/KILL у виводі — інформаційні, exit code не змінюють;
-      # сам гейт M2.1 enforced тестом smoke_tsmom_gate_holds_on_fixture.
+      # перевіряє, що повний CLI-шлях (tsmom+walk-forward, carry) відпрацьовує
+      # без падіння. Провалений гейт M2.1 тепер валить бінарник ненульовим
+      # кодом, тож цей крок заразом enforce'ить гейт на фікстурі.
+      #
+      # --runs-log у тимчасовий файл принципово: n_trials для deflated Sharpe
+      # читається з журналу прогонів, і на бойовому runs/runs.jsonl фікстура
+      # судилася б за дослідницькою історією (при N=9 її DSR падає 0.996→0.891
+      # і CI червонів би від зростання числа гіпотез, а не від регресії коду).
       - name: smoke backtest on fixture dataset
         run: |
           cargo run --bin quant-backtest -- \
-            --data-dir tests/fixtures/daily --strategy tsmom --walk-forward
+            --data-dir tests/fixtures/daily --strategy tsmom --walk-forward --allow-short \
+            --runs-log "$RUNNER_TEMP/ci_runs.jsonl"
           cargo run --bin quant-backtest -- \
-            --funding-csv tests/fixtures/funding.csv --strategy carry --symbol TESTUSDT
+            --funding-csv tests/fixtures/funding.csv --strategy carry --symbol TESTUSDT \
+            --runs-log "$RUNNER_TEMP/ci_runs.jsonl"

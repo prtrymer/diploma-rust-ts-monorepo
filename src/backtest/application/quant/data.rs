@@ -32,9 +32,15 @@ pub fn load_csv_dir(dir: &Path) -> Result<Arc<AlignedMarketData>> {
             .iter()
             .position(|c| *c == "timestamp" || *c == "date")
             .context("csv must have timestamp/date column")?;
+        // adj_close пріоритетніший за close і коли стоїть у файлі пізніше:
+        // раніше вибір мовчки залежав від порядку стовпців, і файл із
+        // `timestamp,close,adj_close` рахувався б по неадаптованій ціні —
+        // для дивідендних інструментів це занижує дохідність у рази
+        // (TLT: 81.52 raw проти 35.84 adjusted на старті ряду).
         let close_idx = cols
             .iter()
-            .position(|c| *c == "adj_close" || *c == "close")
+            .position(|c| *c == "adj_close")
+            .or_else(|| cols.iter().position(|c| *c == "close"))
             .context("csv must have close/adj_close column")?;
         let vol_idx = cols.iter().position(|c| *c == "volume");
 
