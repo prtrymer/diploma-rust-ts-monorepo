@@ -167,6 +167,7 @@ impl PortfolioBacktester {
             &fills,
             &final_portfolio,
             self.initial_capital,
+            self.portfolio.allows_short(),
         );
 
         let instruments: Vec<InstrumentMetrics> = instrument_pnl
@@ -344,11 +345,12 @@ fn report_from_equity_curve(
     fills: &[FillEvent],
     final_portfolio: &Portfolio,
     initial_capital: Decimal,
+    allow_short: bool,
 ) -> BacktestReport {
     // Використовуємо стандартний конструктор для trade-статистики,
     // але Sharpe/MDD/turnover перераховуємо з bar-level кривої.
     let mut report =
-        BacktestReport::from_fills_and_portfolio(fills, final_portfolio, initial_capital);
+        BacktestReport::from_fills_and_portfolio(fills, final_portfolio, initial_capital, allow_short);
 
     let (mdd, mdd_pct) = metrics::max_drawdown(equity_curve);
     report.sharpe_ratio = metrics::sharpe_annualized(equity_curve);

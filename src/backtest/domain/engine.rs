@@ -70,6 +70,7 @@ impl BacktestEngine {
             &fills,
             &portfolio,
             self.config.initial_capital,
+            self.portfolio.allows_short(),
         );
 
         tracing::info!(final_value = %report.final_portfolio_value, "backtest complete");

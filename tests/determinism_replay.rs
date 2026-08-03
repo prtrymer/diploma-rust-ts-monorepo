@@ -161,6 +161,7 @@ async fn run_direct(ticks: &[StockTick], sizing: SizingConfig) -> (Vec<FillEvent
         &fills,
         &portfolio.get_portfolio().await.unwrap(),
         CAPITAL,
+        portfolio.allows_short(),
     );
     (fills, report)
 }
@@ -224,6 +225,7 @@ async fn run_replay(ticks: &[StockTick], sizing: SizingConfig) -> (Vec<FillEvent
         &collected,
         &portfolio.get_portfolio().await.unwrap(),
         CAPITAL,
+        portfolio.allows_short(),
     );
     (collected, report)
 }

@@ -186,6 +186,10 @@ impl PortfolioPort for PortfolioManager {
         Ok(self.portfolio.read().await.positions.get(symbol).cloned())
     }
 
+    fn allows_short(&self) -> bool {
+        self.allow_short
+    }
+
     async fn get_total_value(&self) -> Result<Decimal> {
         Ok(self.portfolio.read().await.get_total_value())
     }

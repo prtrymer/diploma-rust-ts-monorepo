@@ -480,6 +480,7 @@ async fn run_direct_train_test(
         &fills,
         &portfolio,
         args.capital,
+        portfolio_port.allows_short(),
     ))
 }
 

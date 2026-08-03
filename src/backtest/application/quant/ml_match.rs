@@ -289,8 +289,12 @@ pub async fn run_ml_match(args: &QuantArgs, data: Arc<AlignedMarketData>) -> Res
 
             // Звіт: trade-статистика з філів, ризикові метрики — з bar-level
             // кривої (та сама шкала, що в TSMOM/бенчмарків).
-            let mut report =
-                BacktestReport::from_fills_and_portfolio(&fills, &final_portfolio, args.capital);
+            let mut report = BacktestReport::from_fills_and_portfolio(
+                &fills,
+                &final_portfolio,
+                args.capital,
+                portfolio.allows_short(),
+            );
             let (mdd, mdd_pct) = qmetrics::max_drawdown(&equity_curve);
             report.sharpe_ratio = qmetrics::sharpe_annualized(&equity_curve);
             report.max_drawdown = mdd;
