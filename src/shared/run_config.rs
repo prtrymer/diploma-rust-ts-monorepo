@@ -190,6 +190,27 @@ impl Default for WalkForwardConfig {
     }
 }
 
+/// Правила формування юніверсу.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UniverseConfig {
+    /// Лишати в carry-юніверсі лише перпи, у яких є спот-ринок для другої
+    /// ноги хеджу. Не косметичний фільтр: без спота carry-угоди не існує,
+    /// а ранжування за фандингом відбирає саме нехеджовані контракти —
+    /// у кошику за 2026-08-02 таких було 10 з 10.
+    pub require_spot_leg: bool,
+    /// Маніфест спот-пар. Комітиться; прогін читає файл, у мережу не ходить.
+    pub spot_pairs_path: String,
+}
+
+impl Default for UniverseConfig {
+    fn default() -> Self {
+        Self {
+            require_spot_leg: true,
+            spot_pairs_path: "datasets/spot_pairs.csv".to_string(),
+        }
+    }
+}
+
 /// Повна конфігурація прогону. Провенанс: SHA-256 цієї структури.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RunConfig {
@@ -198,6 +219,10 @@ pub struct RunConfig {
     pub costs: CostConfig,
     pub ensemble: EnsembleConfig,
     pub walk_forward: WalkForwardConfig,
+    /// `default` — щоб конфіги, збережені до появи секції, читалися далі.
+    /// На хеш це не впливає: серіалізація завжди пише повну структуру.
+    #[serde(default)]
+    pub universe: UniverseConfig,
 }
 
 impl RunConfig {

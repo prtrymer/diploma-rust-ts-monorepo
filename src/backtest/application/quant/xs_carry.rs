@@ -47,6 +47,10 @@ pub async fn run_xs_carry(args: &QuantArgs) -> Result<()> {
             universe.insert(sym, series);
         }
     }
+    // Без спот-ноги carry-угоди не існує — фільтруємо ДО ранжування, інакше
+    // топ заповнять нехеджовані перпи (саме це й сталось: 10 з 10 у кошику
+    // тіньового журналу за 2026-08-02).
+    super::universe::apply_spot_filter(&mut universe, &args.config.universe, "xs_carry")?;
     anyhow::ensure!(universe.len() >= 5, "need ≥5 symbols, got {}", universe.len());
     println!(
         "XS carry universe: {} перпів (survivorship-застереження: тільки ЖИВІ symbols з API)",

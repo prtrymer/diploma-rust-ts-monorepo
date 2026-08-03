@@ -11,6 +11,7 @@ pub mod funding_ml;
 pub mod ml_match;
 pub mod shadow_carry;
 pub mod strategies;
+pub mod universe;
 pub mod xs_carry;
 
 pub use carry::run_carry;

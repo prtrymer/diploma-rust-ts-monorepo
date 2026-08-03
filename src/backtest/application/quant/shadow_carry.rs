@@ -231,6 +231,9 @@ pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
             universe.insert(sym, series);
         }
     }
+    // Кошик тіньового журналу — ex-ante заявка на угоду, тож у ньому не має
+    // бути перпів, які нічим хеджувати.
+    super::universe::apply_spot_filter(&mut universe, &args.config.universe, "shadow_carry")?;
 
     let rf = RandomForestLikeModel::new_with_params_and_seed(
         funding_feature_keys_ext(),

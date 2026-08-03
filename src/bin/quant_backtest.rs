@@ -80,6 +80,14 @@ fn parse_args() -> Result<QuantArgs> {
                 config.strategy.long_only = false;
                 i += 1;
             }
+            // Вимикає фільтр спот-ноги. Потрібен лише для порівняння зі
+            // старими числами: без нього кошик набирається з перпів, які
+            // нічим хеджувати, і результат не є торговим. Йде в config_hash,
+            // тож такі прогони не змішуються з фільтрованими в журналі.
+            "--no-spot-filter" => {
+                config.universe.require_spot_leg = false;
+                i += 1;
+            }
             "--top-k" => {
                 if let Some(v) = argv.get(i + 1) {
                     top_k = v.parse().unwrap_or(top_k);

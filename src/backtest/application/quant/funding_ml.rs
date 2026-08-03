@@ -298,6 +298,21 @@ pub async fn run_funding_ml(args: &QuantArgs) -> Result<()> {
     println!("Мета-дані: {} символів з {:?}", meta_by_symbol.len(), meta_dir);
     let mut skipped_no_meta = 0usize;
 
+    // Allow-list торгованих символів. Економічна таблиця нижче — це кошик
+    // топ-K, тобто заявка на угоду, тож перпи без спот-ноги в ній не мають
+    // сенсу. Фільтруємо і навчання: прогнозувати фандинг, який нічим не
+    // захеджуєш, цій системі ні до чого.
+    let mut candidates: std::collections::BTreeMap<String, ()> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("csv"))
+        .filter_map(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| (s.to_uppercase(), ()))
+        })
+        .collect();
+    super::universe::apply_spot_filter(&mut candidates, &args.config.universe, "funding_ml")?;
+
     // 1. Датасет по всіх символах.
     let mut samples: Vec<FundingSample> = Vec::new();
     for entry in std::fs::read_dir(&dir)? {
@@ -310,6 +325,9 @@ pub async fn run_funding_ml(args: &QuantArgs) -> Result<()> {
             .and_then(|s| s.to_str())
             .unwrap_or("UNKNOWN")
             .to_uppercase();
+        if !candidates.contains_key(&sym) {
+            continue;
+        }
         let adapter = CsvFundingAdapter::new(&path);
         let series = adapter
             .funding_history(

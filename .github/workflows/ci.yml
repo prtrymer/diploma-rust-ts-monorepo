@@ -45,6 +45,14 @@ jobs:
       - name: verify committed datasets
         run: python3 scripts/fetch_reference_data.py --verify
 
+      # Маніфест спот-пар: юніверс carry мусить бути частиною входу, а не
+      # залежати від відповіді біржі в мить прогону. Перевірка строга — валить
+      # білд, якщо в datasets/funding з'явився символ без запису в маніфесті.
+      # Хибних падінь це не дає: topup_data.py оновлює лише вже наявні файли,
+      # тож юніверс не росте сам по собі.
+      - name: verify spot-pair manifest
+        run: python3 scripts/fetch_spot_pairs.py --verify
+
       # Smoke-бектест на маленькому фікстур-датасеті (офлайн, детермінований):
       # перевіряє, що повний CLI-шлях (tsmom+walk-forward, carry) відпрацьовує
       # без падіння. Провалений гейт M2.1 тепер валить бінарник ненульовим
