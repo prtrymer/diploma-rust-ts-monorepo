@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::PathBuf;
 
@@ -30,6 +30,61 @@ fn funding_estimate_from_premium(premium: Decimal) -> Decimal {
     let interest = dec!(0.0001);
     let clamp_component = (interest - premium).clamp(dec!(-0.0005), dec!(0.0005));
     premium + clamp_component
+}
+
+/// Кошики одного запису журналу: назва кошика → символи.
+type LedgerBaskets = BTreeMap<String, BTreeSet<String>>;
+/// Записи журналу за часом: (retro, якір, кошики).
+type BasketHistory = Vec<(bool, DateTime<Utc>, LedgerBaskets)>;
+
+/// Тижнів у році — база аннуалізації витрат. Тиждень запису рівно 7 днів
+/// (якір → якір+7д), тож 365/7, а не 52.
+fn weeks_per_year() -> Decimal {
+    dec!(365) / dec!(7)
+}
+
+/// Скільки нотіоналу треба проторгувати, щоб із кошика `prev` дістати `cur`.
+/// Одиниця виміру — частка задіяного капіталу (1.0 = увесь капітал раз).
+///
+/// Кошики сусідніх тижнів перетинаються, і символ, що лишився в топі, ніхто
+/// не перевідкриває — його просто тримають далі. Тому витрати рахуються на
+/// ОБОРОТ, а не на весь кошик щотижня. Це не дрібниця: виміряно на журналі,
+/// оборот baseline_est 20–70%, а rf 0–40%, тож однакова ставка «100% щотижня»
+/// зробила б A/B несправедливим — карала б кошики за розмір, а не за якість.
+///
+/// Кожен символ має ДВІ ноги (спот + перп), тож і вихід, і вхід коштують по
+/// два перетини спреду на символ. Перший запис (немає попереднього) платить
+/// лише за відкриття.
+fn traded_notional(cur: &BTreeSet<String>, prev: Option<&BTreeSet<String>>) -> Decimal {
+    const LEGS: Decimal = Decimal::TWO;
+    if cur.is_empty() {
+        return Decimal::ZERO;
+    }
+    let cur_n = Decimal::from(cur.len() as u64);
+    let Some(prev) = prev else {
+        // Перший тиждень: відкрити ввесь кошик, обидві ноги.
+        return LEGS;
+    };
+    let entered = Decimal::from(cur.difference(prev).count() as u64) / cur_n;
+    let exited = if prev.is_empty() {
+        Decimal::ZERO
+    } else {
+        Decimal::from(prev.difference(cur).count() as u64) / Decimal::from(prev.len() as u64)
+    };
+    (entered + exited) * LEGS
+}
+
+/// Частка кошика, що змінилася відносно попереднього тижня (для звіту).
+fn turnover(cur: &BTreeSet<String>, prev: Option<&BTreeSet<String>>) -> Decimal {
+    if cur.is_empty() {
+        return Decimal::ZERO;
+    }
+    match prev {
+        None => Decimal::ONE,
+        Some(p) => {
+            Decimal::from(cur.difference(p).count() as u64) / Decimal::from(cur.len() as u64)
+        }
+    }
 }
 
 pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
@@ -69,9 +124,16 @@ pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
     let retro = retro_days > 0;
 
     // 1. Оцінка старих записів журналу.
-    std::fs::create_dir_all("shadow")?;
-    let ledger_path = "shadow/ledger.jsonl";
-    let results_path = "shadow/results.jsonl";
+    //
+    // SHADOW_DIR зсуває журнал у інше місце. Потрібен, щоб зміни в оцінці
+    // можна було перевірити НЕ чіпаючи бойовий журнал: він append-only і
+    // git-нотаризований, тобто пробний прогін у ньому — це підробка запису.
+    // Дефолт лишається `shadow/`, тож автоматика працює як була.
+    let shadow_dir = env::var("SHADOW_DIR").unwrap_or_else(|_| "shadow".to_string());
+    std::fs::create_dir_all(&shadow_dir)?;
+    let ledger_path = format!("{shadow_dir}/ledger.jsonl");
+    let results_path = format!("{shadow_dir}/results.jsonl");
+    let (ledger_path, results_path) = (ledger_path.as_str(), results_path.as_str());
     let ledger: Vec<serde_json::Value> = std::fs::read_to_string(ledger_path)
         .unwrap_or_default()
         .lines()
@@ -108,6 +170,40 @@ pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
     }
 
     let annualize = |mean_per_8h: Decimal| (mean_per_8h * dec!(1095) * dec!(100)).round_dp(2);
+
+    // Кошики журналу за часом — щоб знайти кошик ПОПЕРЕДНЬОГО тижня і взяти
+    // витрати з обороту, а не з повного перевідкриття. Retro-записи живуть
+    // окремою послідовністю: у них зсунутий якір, і мішати їх зі справжніми
+    // означало б рахувати оборот між тижнями, що не йшли один за одним.
+    let mut history: BasketHistory = ledger
+        .iter()
+        .filter_map(|e| {
+            let anchor = e["anchor_ts"].as_str()?.parse::<DateTime<Utc>>().ok()?;
+            let retro = e["retro"].as_bool().unwrap_or(false);
+            let baskets = ["baseline_est", "rf"]
+                .iter()
+                .filter_map(|name| {
+                    let syms: BTreeSet<String> = e["baskets"][name]
+                        .as_array()?
+                        .iter()
+                        .filter_map(|s| s["symbol"].as_str().map(str::to_string))
+                        .collect();
+                    Some((name.to_string(), syms))
+                })
+                .collect();
+            Some((retro, anchor, baskets))
+        })
+        .collect();
+    history.sort_by_key(|(retro, anchor, _)| (*retro, *anchor));
+
+    let previous_baskets = |retro: bool, anchor: DateTime<Utc>| {
+        history
+            .iter()
+            .rfind(|(r, a, _)| *r == retro && *a < anchor)
+            .map(|(_, _, b)| b)
+    };
+
+    let scenarios = super::cost_scenarios();
     let mut new_results = Vec::new();
     for e in &ledger {
         let id = e["id"].as_str().unwrap_or_default().to_string();
@@ -134,7 +230,14 @@ pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
             if !coverage_ok {
                 continue;
             }
+            let entry_retro = e["retro"].as_bool().unwrap_or(false);
+            let prev = previous_baskets(entry_retro, entry_anchor);
             let mut per_basket = serde_json::Map::new();
+            let mut turnovers = serde_json::Map::new();
+            let mut nets: BTreeMap<&str, serde_json::Map<String, serde_json::Value>> =
+                scenarios.iter().map(|s| (s.key, Default::default())).collect();
+            let mut cost_pcts: BTreeMap<&str, serde_json::Map<String, serde_json::Value>> =
+                scenarios.iter().map(|s| (s.key, Default::default())).collect();
             for basket_name in ["baseline_est", "rf"] {
                 let Some(symbols) = e["baskets"][basket_name].as_array() else { continue };
                 let mut vals = Vec::new();
@@ -180,10 +283,39 @@ pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
                 if !vals.is_empty() {
                     let mean = vals.iter().copied().sum::<Decimal>()
                         / Decimal::from(vals.len() as u64);
+                    let gross = annualize(mean);
                     per_basket.insert(
                         basket_name.to_string(),
-                        serde_json::json!(annualize(mean).to_string()),
+                        serde_json::json!(gross.to_string()),
                     );
+
+                    // Витрати: оборот кошика × дві ноги × ставка сценарію,
+                    // аннуалізовано з тижня. Дає ту саму величину, що net у
+                    // xs_carry, — сітки витрат спільні (super::cost_scenarios).
+                    let cur: BTreeSet<String> = symbols
+                        .iter()
+                        .filter_map(|s| s["symbol"].as_str().map(str::to_string))
+                        .collect();
+                    let prev_basket = prev.and_then(|b| b.get(basket_name));
+                    turnovers.insert(
+                        basket_name.to_string(),
+                        serde_json::json!(turnover(&cur, prev_basket).round_dp(4).to_string()),
+                    );
+                    let traded = traded_notional(&cur, prev_basket);
+                    for sc in &scenarios {
+                        let cost =
+                            (traded * sc.per_notional() * weeks_per_year() * dec!(100)).round_dp(2);
+                        cost_pcts
+                            .get_mut(sc.key)
+                            .expect("scenario key inserted above")
+                            .insert(basket_name.to_string(), serde_json::json!(cost.to_string()));
+                        nets.get_mut(sc.key)
+                            .expect("scenario key inserted above")
+                            .insert(
+                                basket_name.to_string(),
+                                serde_json::json!((gross - cost).to_string()),
+                            );
+                    }
                 }
             }
             if !per_basket.is_empty() {
@@ -191,7 +323,13 @@ pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
                     "entry_id": id,
                     "kind": kind,
                     "week": [entry_anchor, week_end],
+                    // Історична назва — це ВАЛОВЕ число (фандинг без витрат).
+                    // Лишається як є, щоб старі записи журналу не стали
+                    // незіставними; критерій рішення v2 читає net_annualized_pct.
                     "realized_annualized_pct": per_basket,
+                    "turnover": turnovers,
+                    "net_annualized_pct": nets,
+                    "cost_annualized_pct": cost_pcts,
                     "evaluated_at": Utc::now(),
                 }));
             }
@@ -393,4 +531,79 @@ pub async fn run_shadow_carry(args: &QuantArgs) -> Result<()> {
         new_results.len()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(syms: &[&str]) -> BTreeSet<String> {
+        syms.iter().map(|s| s.to_string()).collect()
+    }
+
+    // Перший тиждень платить лише за відкриття: закривати ще нічого.
+    #[test]
+    fn first_week_pays_only_for_opening() {
+        assert_eq!(traded_notional(&set(&["A", "B"]), None), dec!(2));
+        assert_eq!(turnover(&set(&["A", "B"]), None), Decimal::ONE);
+    }
+
+    // Кошик не змінився — його НЕ перевідкривають, витрат нема. Це головне,
+    // заради чого витрати рахуються на оборот: щотижневе перевідкриття
+    // з'їдало б фандинг там, де жодної угоди не відбулось.
+    #[test]
+    fn unchanged_basket_costs_nothing() {
+        let b = set(&["A", "B", "C"]);
+        assert_eq!(traded_notional(&b, Some(&b)), Decimal::ZERO);
+        assert_eq!(turnover(&b, Some(&b)), Decimal::ZERO);
+    }
+
+    // Один із двох символів замінено: вийшов 1/2, зайшов 1/2, по дві ноги
+    // кожен → (0.5 + 0.5) × 2 = 2.0 нотіоналу.
+    #[test]
+    fn half_the_basket_replaced() {
+        let prev = set(&["A", "B"]);
+        let cur = set(&["A", "C"]);
+        assert_eq!(traded_notional(&cur, Some(&prev)), dec!(2));
+        assert_eq!(turnover(&cur, Some(&prev)), dec!(0.5));
+    }
+
+    // Повна заміна коштує вдвічі більше за половинну — витрати мусять
+    // РЕАГУВАТИ на оборот, інакше A/B карав би кошики однаково незалежно
+    // від того, як часто вони перетасовуються (виміряно на журналі:
+    // baseline_est 20–70%, rf 0–40%).
+    #[test]
+    fn cost_scales_with_turnover() {
+        let prev = set(&["A", "B"]);
+        let half = traded_notional(&set(&["A", "C"]), Some(&prev));
+        let full = traded_notional(&set(&["C", "D"]), Some(&prev));
+        assert_eq!(full, half * dec!(2));
+    }
+
+    // Ставка сценарію = комісія + ПІВспреду (сторона платить свою половину).
+    #[test]
+    fn scenario_charges_half_spread() {
+        let sc = super::super::cost_scenarios();
+        let taker = sc.iter().find(|s| s.key == "taker").unwrap();
+        assert_eq!(taker.per_notional(), dec!(0.00045) + dec!(0.0001));
+        let maker = sc.iter().find(|s| s.key == "maker").unwrap();
+        assert_eq!(maker.per_notional(), dec!(0.00018));
+    }
+
+    // Наскрізна перевірка величини: повна заміна кошика щотижня на мейкері.
+    // 4 × 0.00018 × (365/7) × 100 ≈ 3.75%/рік — більше за валовий фандинг
+    // хеджованого юніверсу (~1.6–1.8%), тобто оборот тут не дрібниця.
+    #[test]
+    fn full_weekly_turnover_costs_more_than_the_edge() {
+        let traded = traded_notional(&set(&["C", "D"]), Some(&set(&["A", "B"])));
+        let maker = super::super::cost_scenarios()
+            .into_iter()
+            .find(|s| s.key == "maker")
+            .unwrap();
+        let annual = traded * maker.per_notional() * weeks_per_year() * dec!(100);
+        assert!(
+            annual > dec!(3.7) && annual < dec!(3.8),
+            "очікували ≈3.75%/рік, отримали {annual}"
+        );
+    }
 }

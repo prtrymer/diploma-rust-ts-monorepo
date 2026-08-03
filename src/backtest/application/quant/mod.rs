@@ -26,7 +26,51 @@ use crate::database::adapters::run_logger_file::FileRunLogger;
 use crate::database::ports::run_logger::{RunLogger, RunRecord};
 use crate::shared::run_config::RunConfig;
 use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use std::path::PathBuf;
+
+/// Сітка витрат carry-прогонів.
+///
+/// Спільна для `xs_carry` і `shadow_carry` навмисно: критерії рішення
+/// (`shadow/DECISION_CRITERIA.md`, v2) порівнюють net тіньового журналу з
+/// бектестом, і якщо ці дві сітки розійдуться, порівняння стане неправдою,
+/// не подавши жодного сигналу. Який зі сценаріїв реалістичний — питання
+/// відкрите (maker-філ на ребалансі не гарантований, див.
+/// `docs/xs-carry-sharpe-audit.md`), тому обидва рахуються й звітуються поруч.
+pub struct CostScenario {
+    /// Короткий ключ у JSON (`maker` / `taker`).
+    pub key: &'static str,
+    /// Підпис для друку.
+    pub label: &'static str,
+    pub commission_pct: Decimal,
+    pub spread_pct: Decimal,
+}
+
+impl CostScenario {
+    /// Витрати на одиницю ТОРГОВАНОГО нотіоналу: комісія + півспреду.
+    /// Половина, а не весь: сторона платить свою половину — та сама угода,
+    /// що в `SimpleCommissionSpread` (`spread_component_charges_half_spread`).
+    pub fn per_notional(&self) -> Decimal {
+        self.commission_pct + self.spread_pct / Decimal::TWO
+    }
+}
+
+pub fn cost_scenarios() -> Vec<CostScenario> {
+    vec![
+        CostScenario {
+            key: "taker",
+            label: "taker 0.045%+спред",
+            commission_pct: dec!(0.00045),
+            spread_pct: dec!(0.0002),
+        },
+        CostScenario {
+            key: "maker",
+            label: "maker 0.018%",
+            commission_pct: dec!(0.00018),
+            spread_pct: dec!(0),
+        },
+    ]
+}
 
 /// Параметри прогону quant-CLI (заповнюються з аргументів командного рядка).
 pub struct QuantArgs {

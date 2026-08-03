@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use std::sync::Arc;
 
 use super::{log_run, QuantArgs};
@@ -94,10 +93,9 @@ pub async fn run_xs_carry(args: &QuantArgs) -> Result<()> {
     );
 
     // Дві сітки витрат: реалістичний taker і maker (лімітні ордери).
-    let scenarios: Vec<(&str, Decimal, Decimal)> = vec![
-        ("taker 0.045%+спред", dec!(0.00045), dec!(0.0002)),
-        ("maker 0.018%", dec!(0.00018), dec!(0)),
-    ];
+    // Визначені в super::cost_scenarios — та сама сітка, що в shadow_carry,
+    // інакше net журналу й net бектесту стали б незіставними мовчки.
+    let scenarios = super::cost_scenarios();
 
     println!(
         "\n=== Cross-Sectional Funding Carry: top-{} з {} перпів, ребаланс раз на тиждень ===",
@@ -106,10 +104,11 @@ pub async fn run_xs_carry(args: &QuantArgs) -> Result<()> {
     );
     println!("Розріз IS/OOS: {}", mid);
     let mut logged = Vec::new();
-    for (label, commission_pct, spread_pct) in &scenarios {
+    for scenario in &scenarios {
+        let label = scenario.label;
         let mut costs = args.config.costs.clone();
-        costs.commission_pct = *commission_pct;
-        costs.spread_pct = *spread_pct;
+        costs.commission_pct = scenario.commission_pct;
+        costs.spread_pct = scenario.spread_pct;
         costs.impact = None; // funding-серії без обсягів → impact не моделюємо
         let broker = Arc::new(SimpleBrokerSimulator {
             slippage_pct: Decimal::ZERO,
